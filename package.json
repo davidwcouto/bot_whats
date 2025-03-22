@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "Buttons": "^0.0.1",
+    "express": "^4.21.2",
+    "git": "^0.1.5",
+    "luxon": "^3.5.0",
+    "puppeteer": "^24.4.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0",
+    "xlsx": "^0.18.5"
+  }
+}
