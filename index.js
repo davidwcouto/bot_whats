@@ -5,7 +5,6 @@ const xlsx = require("xlsx");
 const fs = require("fs");
 const puppeteer = require('puppeteer');
 const app = express();
-const port = process.env.PORT || 3000;  // A Fly.io fornece a variável PORTT
 const { DateTime } = require("luxon");
 
 // --- Carregar contatos autorizados a partir do arquivo de texto ---
