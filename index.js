@@ -5,7 +5,7 @@ const xlsx = require("xlsx");
 const fs = require("fs");
 const puppeteer = require('puppeteer');
 const app = express();
-const port = process.env.PORT || 3000;  
+const port = process.env.PORT || 3000;  // A Fly.io fornece a variável PORTT
 const { DateTime } = require("luxon");
 
 // --- Carregar contatos autorizados a partir do arquivo de texto ---
@@ -37,6 +37,7 @@ const client = new Client({
 let atendimentoHumano = new Set(); // Armazena usuários em atendimento humano
 let clientesAtendidos = new Set(); // Garante que a mensagem inicial só seja enviada uma vez por cliente
 let usuariosPendentes = new Set(); // Armazena usuários que ainda não escolheram 1 ou 2
+let silencedChats = new Set(); // Lista de conversas silenciadas
 
 // Gera o QR Code para autenticação
 client.on("qr", (qr) => {
@@ -75,6 +76,13 @@ const removerClientesAtendidos = (chatId) => {
     }, 60 * 60 * 1000);
 };
 
+const removerSilencedChats = (chatId) => {
+    setTimeout(() => {
+		silencedChats.delete(chatId);
+		clientesAtendidos.delete(chatId);
+		console.log(`Chat reativado automaticamente: ${chatId}`);
+    }, 30 * 60 * 1000);
+};
 
 // Função para buscar preços
 const buscarPreco = (produto) => {
@@ -159,6 +167,28 @@ const estaDentroDoHorario = () => {
     return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
 };
 
+// Evento para DETECTAR mensagens enviadas pelo próprio usuário e SILENCIAR a conversa
+client.on("message_create", async (message) => {
+    const chatId = message.to || message.from;
+
+    // Se a mensagem for enviada por VOCÊ manualmente
+    if (message.fromMe) {
+        // Lista de palavras-chave usadas em respostas automáticas do bot
+        const mensagensDoBot = [
+            "📞", "💰", "⏳", "❌", "Olá!", "Digite o nome do produto",
+            "Como posso te ajudar?", "Para fazer pedido digite 2️⃣", "Digite a opção", "⚠ Nenhum produto"
+        ];
+
+        // Verifica se a mensagem é uma resposta automática do bott
+        const ehMensagemDoBot = mensagensDoBot.some(keyword => message.body.includes(keyword));
+
+        if (!ehMensagemDoBot) {
+            silencedChats.add(chatId);
+            console.log(`Chat silenciado manualmente: ${chatId}`);
+			removerSilencedChats(chatId);
+        }
+    }
+});
 
 // Evento de mensagem recebida
 client.on("message", async (message) => {
@@ -167,7 +197,12 @@ client.on("message", async (message) => {
   const phone = chatId.split("@")[0];
   const msg = message.body.toLowerCase().trim();
   const chat = await message.getChat();
-
+  
+      // Se o chat estiver silenciado, ignorar a mensagem
+    if (silencedChats.has(chatId)) {
+        console.log(`Chat silenciado (${chatId}), ignorando mensagem.`);
+        return;
+    }
 
   // Verifica se o remetente está na lista de contatos autorizados
   if (!allowedContacts.includes(phone)) {
