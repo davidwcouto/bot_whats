@@ -198,6 +198,12 @@ client.on("message", async (message) => {
   const msg = message.body.toLowerCase().trim();
   const chat = await message.getChat();
   
+      // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignora
+    if (message.hasMedia) {
+        console.log(`Mensagem com mídia ignorada de ${chatId}`);
+        return;
+    }
+  
       // Se o chat estiver silenciado, ignorar a mensagem
     if (silencedChats.has(chatId)) {
         console.log(`Chat silenciado (${chatId}), ignorando mensagem.`);
@@ -261,10 +267,7 @@ client.on("message", async (message) => {
 
   // Verifica se o usuário ainda não escolheu 1 ou 2
   if (usuariosPendentes.has(chatId)) {
-	if (msg.hasMedia) {
-        console.log('Mensagem ignorada (contém mídia)');
-        return;
-    }
+
     if (msg === "1" || msg === "2") {
       usuariosPendentes.delete(chatId); // Remove da lista após escolher
     } else {
