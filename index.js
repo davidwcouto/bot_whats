@@ -167,7 +167,7 @@ const estaDentroDoHorario = () => {
     return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
 };
 
-    // Se a mensagem contém mídia (foto, vídeo, áudio, documento), não responder
+    // Se a mensagem contém mídia (foto, vídeo, áudiod, documento), não responder
 client.on('message', async msg => {
     if (msg.hasMedia) {
         console.log('Mensagem ignorada (contém mídia)');
