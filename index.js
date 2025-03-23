@@ -167,15 +167,6 @@ const estaDentroDoHorario = () => {
     return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
 };
 
-    // Se a mensagem contém mídia (foto, vídeo, áudiod, documento), não responder
-client.on('message', async msg => {
-    if (msg.hasMedia) {
-        console.log('Mensagem ignorada (contém mídia)');
-        return;
-    }
-
-});
-
 // Evento para DETECTAR mensagens enviadas pelo próprio usuário e SILENCIAR a conversa
 client.on("message_create", async (message) => {
     const chatId = message.to || message.from;
@@ -270,6 +261,10 @@ client.on("message", async (message) => {
 
   // Verifica se o usuário ainda não escolheu 1 ou 2
   if (usuariosPendentes.has(chatId)) {
+	if (msg.hasMedia) {
+        console.log('Mensagem ignorada (contém mídia)');
+        return;
+    }
     if (msg === "1" || msg === "2") {
       usuariosPendentes.delete(chatId); // Remove da lista após escolher
     } else {
