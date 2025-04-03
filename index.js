@@ -247,7 +247,7 @@ client.on("message", async (message) => {
     }
 	
 	if (msg === "1" || msg === "2") {
-		clientesAtendidos.add(chatId); // Marca o cliente como atendidoo
+		clientesAtendidos.add(chatId); // Marca o cliente como atendido
 	} else {
 		if (!clientesAtendidos.has(chatId)) {
 		try {
