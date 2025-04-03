@@ -246,9 +246,6 @@ client.on("message", async (message) => {
         return;
     }
 	
-	if (msg === "1" || msg === "2") {
-		clientesAtendidos.add(chatId); // Marca o cliente como atendido
-	} else {
 		if (!clientesAtendidos.has(chatId)) {
 		clientesAtendidos.add(chatId); // Marca o cliente como atendido primeiro
 		try {
@@ -266,7 +263,6 @@ client.on("message", async (message) => {
 		}
 		}
 		return; // Interrompe o fluxo aqui para evitar a execução desnecessária
-	}
 	}
 
   // Verifica se o usuário ainda não escolheu 1 ou 2
