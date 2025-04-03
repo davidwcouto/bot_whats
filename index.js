@@ -88,7 +88,7 @@ const removerSilencedChats = (chatId) => {
 const buscarPreco = (produto) => {
     if (!produto) return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
 
-    // Se a mensagem for apenas "incell", "original" ou "nacional", retorna erro
+    // Se a mensagem for apenas "incell", "original" ou "nacional", retorna erroo
     const termosInvalidos = ["incell", "incel", "original", "orig", "nacional", "nac"];
     if (termosInvalidos.includes(produto.toLowerCase())) {
         return "❌ Digite o nome completo do produto.";
