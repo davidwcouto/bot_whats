@@ -250,8 +250,7 @@ client.on("message", async (message) => {
 	if (msg === "1" || msg === "2") {
 		clientesAtendidos.add(chatId); // Marca o cliente como atendidooo
 	} else {
-		if (!clientesAtendidos.has(chatId)) {
-		clientesAtendidos.add(chatId); // Marca o cliente como atendido primeiro
+		if (!clientesAtendidos.has(chatId) && !usuariosPendentes.has(chatId)) {
 		try {
 		await client.sendMessage(
 		chatId,
