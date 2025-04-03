@@ -268,6 +268,7 @@ client.on("message", async (message) => {
 		}
 		return; // Interrompe o fluxo aqui para evitar a execução desnecessária
 	}
+	}
 
   // Verifica se o usuário ainda não escolheu 1 ou 2
   if (usuariosPendentes.has(chatId)) {
