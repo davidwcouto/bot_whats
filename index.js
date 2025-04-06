@@ -90,21 +90,49 @@ const buscarPreco = (produto) => {
 
     // Se a mensagem for apenas "incell", "original" ou "nacional", retorna erroo
     const termosInvalidos = ["incell", "incel", "original", "orig", "nacional", "nac"];
-    if (termosInvalidos.includes(produto.toLowerCase())) {
-        return "❌ Digite o nome completo do produto.";
-	}
+    const preposicoes = ["do", "da", "de"];
 
-    const item = data.find(row => 
-        row.Produto && row.Produto.toLowerCase().includes(produto.toLowerCase())
-    );
+    const normalizar = (str) =>
+        str
+            .toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+            .replace(/\s+/g, ' ') // múltiplos espaços => 1 espaço
+            .trim();
+
+    const removerEspacos = (str) => str.replace(/\s+/g, '');
+
+    const removerPreposicoes = (str) => {
+        return str
+            .split(' ')
+            .filter(palavra => !preposicoes.includes(palavra))
+            .join(' ')
+            .trim();
+    };
+
+    const nomeNormalizado = removerPreposicoes(normalizar(produto));
+    const nomeSemEspacos = removerEspacos(nomeNormalizado);
+
+    if (termosInvalidos.includes(nomeNormalizado)) {
+        return "❌ Digite o nome completo do produto.";
+    }
+
+    const item = data.find(row => {
+        if (!row.Produto) return false;
+
+        const nomeProduto = normalizar(row.Produto);
+        const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
+
+        return (
+            nomeProduto.includes(nomeNormalizado) ||
+            nomeProdutoSemEspacos.includes(nomeSemEspacos)
+        );
+    });
 
     if (!item) {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
 	}
 	
     return `💰 O preço de *${item.Produto}* é *R$ ${item.Preco}* \n\nPara fazer pedido digite 2️⃣`;
-	
-	
 };
 
 const horarioAtendimento = {
