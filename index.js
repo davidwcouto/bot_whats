@@ -115,23 +115,37 @@ const buscarPreco = (produto) => {
         return "❌ Digite o nome completo do produto.";
     }
 
-const item = data.find(row => {
+// Primeiro, tenta encontrar um match exato
+let item = data.find(row => {
     if (!row.Produto) return false;
 
     const nomeProduto = normalizar(row.Produto);
     const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
 
-    // Verificação exata primeiro
-    if (nomeProduto === nomeNormalizado || nomeProdutoSemEspacos === nomeSemEspacos) {
-        return true;
-    }
-
-    // Depois, verificação por "includes"
     return (
-        nomeProduto.includes(nomeNormalizado) ||
-        nomeProdutoSemEspacos.includes(nomeSemEspacos)
+        nomeProduto === nomeNormalizado ||
+        nomeProdutoSemEspacos === nomeSemEspacos
     );
 });
+
+// Se não encontrar exato, tenta encontrar o match mais próximo com prioridade ao nome mais longo
+if (!item) {
+    let melhoresMatches = data
+        .filter(row => {
+            if (!row.Produto) return false;
+
+            const nomeProduto = normalizar(row.Produto);
+            const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
+
+            return (
+                nomeProduto.includes(nomeNormalizado) ||
+                nomeProdutoSemEspacos.includes(nomeSemEspacos)
+            );
+        })
+        .sort((a, b) => b.Produto.length - a.Produto.length); // prioriza nomes maiores
+
+    item = melhoresMatches[0]; // pega o melhor match, se houver
+}
 
     if (!item) {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
