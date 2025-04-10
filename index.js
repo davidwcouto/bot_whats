@@ -115,7 +115,7 @@ const buscarPreco = (produto) => {
         return "❌ Digite o nome completo do produto.";
     }
 
-// Primeiro, tenta encontrar um match exato
+// Primeiro, tenta encontrar um match exatoo
 let item = data.find(row => {
     if (!row.Produto) return false;
 
