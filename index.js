@@ -100,13 +100,13 @@ const buscarPreco = (produto) => {
 
     const removerEspacos = (str) => str.replace(/\s+/g, '');
 
-    const removerPreposicoes = (str) => {
-        return str
-            .split(' ')
-            .filter(palavra => !preposicoes.includes(palavra))
-            .join(' ')
-            .trim();
-    };
+const removerPreposicoes = (str) => {
+    return str
+        .split(' ')
+        .filter(palavra => !preposicoes.includes(palavra))
+        .join(' ')
+        .trim();
+};
 
     const nomeNormalizado = removerPreposicoes(normalizar(produto));
     const nomeSemEspacos = removerEspacos(nomeNormalizado);
@@ -115,37 +115,19 @@ const buscarPreco = (produto) => {
         return "❌ Digite o nome completo do produto.";
     }
 
-// Primeiro, tenta encontrar um match exatoo
-let item = data.find(row => {
-    if (!row.Produto) return false;
+    const item = data.find(row => {
+        if (!row.Produto) return false;
 
-    const nomeProduto = normalizar(row.Produto);
-    const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
+        const nomeProduto = normalizar(row.Produto);
+        const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
 
-    return (
-        nomeProduto === nomeNormalizado ||
-        nomeProdutoSemEspacos === nomeSemEspacos
-    );
-});
-
-// Se não encontrar exato, tenta encontrar o match mais próximo com prioridade ao nome mais longo
-if (!item) {
-    let melhoresMatches = data
-        .filter(row => {
-            if (!row.Produto) return false;
-
-            const nomeProduto = normalizar(row.Produto);
-            const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
-
-            return (
-                nomeProduto.includes(nomeNormalizado) ||
-                nomeProdutoSemEspacos.includes(nomeSemEspacos)
-            );
-        })
-        .sort((a, b) => b.Produto.length - a.Produto.length); // prioriza nomes maiores
-
-    item = melhoresMatches[0]; // pega o melhor match, se houver
-}
+        return (
+            nomeProduto === nomeNormalizado ||
+            nomeProdutoSemEspacos === nomeSemEspacos ||
+            nomeProduto.includes(nomeNormalizado) ||
+            nomeProdutoSemEspacos.includes(nomeSemEspacos)
+        );
+    });
 
     if (!item) {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
@@ -297,24 +279,36 @@ client.on("message", async (message) => {
 	if (msg === "1" || msg === "2") {
 		clientesAtendidos.add(chatId); // Marca o cliente como atendidooo
 	} else {
-		if (!clientesAtendidos.has(chatId)) {
-		clientesAtendidos.add(chatId); // Marca o cliente como atendido primeiro
-		try {
-		await client.sendMessage(
-		chatId,
-		"Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
-		);
-		usuariosPendentes.add(chatId); // Adiciona o cliente à lista de pendentes
-		clientesAtendidos.add(chatId); // Marca o cliente como atendido
-		} catch (error) {
-		if (error.message.includes("Could not get the quoted message")) {
-			console.warn("Aviso: Não foi possível obter a mensagem citada. Enviando mensagem mesmo assim.");
-		} else {
-			console.error("Erro ao enviar mensagem:", error.message);
-		}
-		}
-		return; // Interrompe o fluxo aqui para evitar a execução desnecessária
-	}
+if (!clientesAtendidos.has(chatId)) {
+    const respostaPossivel = buscarPreco(msg);
+
+    // Se buscarPreco retornou algo que não é a mensagem de erro padrão
+    if (!respostaPossivel.startsWith("❌ Produto não encontrado") &&
+        !respostaPossivel.startsWith("⚠ Nenhum produto")) {
+        clientesAtendidos.add(chatId);
+        await client.sendMessage(chatId, respostaPossivel);
+        await chat.markUnread();
+        return;
+    }
+
+    // Se não parece uma tentativa de consulta válida, manda mensagem orientandoo
+    try {
+        await client.sendMessage(
+            chatId,
+            "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
+        );
+        usuariosPendentes.add(chatId);
+        clientesAtendidos.add(chatId);
+    } catch (error) {
+        if (error.message.includes("Could not get the quoted message")) {
+            console.warn("Aviso: Não foi possível obter a mensagem citada. Enviando mensagem mesmo assim.");
+        } else {
+            console.error("Erro ao enviar mensagem:", error.message);
+        }
+    }
+    return;
+}
+
 	}
 
   // Verifica se o usuário ainda não escolheu 1 ou 2

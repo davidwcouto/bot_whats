@@ -1,19 +1,39 @@
-2025/04/06-19:30:44.264 3bd0 Reusing MANIFEST C:\Users\david\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2025/04/06-19:30:44.264 3bd0 Recovering log #280
-2025/04/06-19:30:44.433 3bd0 Reusing old log C:\Users\david\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000280.log 
-2025/04/06-19:30:46.177 e4c Level-0 table #288: started
-2025/04/06-19:30:46.197 e4c Level-0 table #288: 1017077 bytes OK
-2025/04/06-19:30:46.197 e4c Delete type=0 #280
-2025/04/06-19:30:46.198 e4c Manual compaction at level-0 from '\x00\x1f\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00 \x00\x00\x00' @ 0 : 0; will stop at (end)
-2025/04/06-19:30:48.347 49f4 Compacting 1@1 + 4@2 files
-2025/04/06-19:30:48.468 49f4 Generated table #289@1: 82886 keys, 2231665 bytes
-2025/04/06-19:30:48.549 49f4 Generated table #290@1: 55309 keys, 2228958 bytes
-2025/04/06-19:30:48.610 49f4 Generated table #291@1: 28862 keys, 2191872 bytes
-2025/04/06-19:30:48.662 49f4 Generated table #292@1: 35912 keys, 1075071 bytes
-2025/04/06-19:30:48.662 49f4 Compacted 1@1 + 4@2 files => 7727566 bytes
-2025/04/06-19:30:48.662 49f4 compacted to: files[ 0 0 4 0 0 0 0 ]
-2025/04/06-19:30:48.662 49f4 Delete type=2 #282
-2025/04/06-19:30:48.662 49f4 Delete type=2 #283
-2025/04/06-19:30:48.662 49f4 Delete type=2 #284
-2025/04/06-19:30:48.662 49f4 Delete type=2 #285
-2025/04/06-19:30:48.662 49f4 Delete type=2 #288
+2025/04/10-16:24:48.384 7754 Reusing MANIFEST C:\Users\david\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/04/10-16:24:48.384 7754 Recovering log #144
+2025/04/10-16:24:48.472 7754 Reusing old log C:\Users\david\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000144.log 
+2025/04/10-16:24:48.472 7754 Delete type=2 #140
+2025/04/10-16:24:48.472 7754 Delete type=2 #141
+2025/04/10-16:24:48.472 7754 Delete type=2 #142
+2025/04/10-16:24:48.472 7754 Delete type=2 #143
+2025/04/10-16:24:48.472 7754 Delete type=2 #145
+2025/04/10-16:24:50.413 6e78 Level-0 table #152: started
+2025/04/10-16:24:50.424 6e78 Level-0 table #152: 507747 bytes OK
+2025/04/10-16:24:50.424 6e78 Delete type=0 #144
+2025/04/10-16:24:50.425 6e78 Manual compaction at level-0 from '\x00\x1e\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x1f\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/04/10-16:24:52.727 6e68 Compacting 1@1 + 4@2 files
+2025/04/10-16:24:52.806 6e68 Generated table #153@1: 60898 keys, 2213221 bytes
+2025/04/10-16:24:52.882 6e68 Generated table #154@1: 32380 keys, 2196713 bytes
+2025/04/10-16:24:52.964 6e68 Generated table #155@1: 32482 keys, 2194077 bytes
+2025/04/10-16:24:52.996 6e68 Generated table #156@1: 29878 keys, 668155 bytes
+2025/04/10-16:24:52.996 6e68 Compacted 1@1 + 4@2 files => 7272166 bytes
+2025/04/10-16:24:52.997 6e68 compacted to: files[ 0 0 4 0 0 0 0 ]
+2025/04/10-16:24:52.997 6e68 Delete type=2 #146
+2025/04/10-16:24:52.997 6e68 Delete type=2 #147
+2025/04/10-16:24:52.997 6e68 Delete type=2 #148
+2025/04/10-16:24:52.997 6e68 Delete type=2 #149
+2025/04/10-16:24:52.997 6e68 Delete type=2 #152
+2025/04/10-16:26:26.631 6d3c Level-0 table #158: started
+2025/04/10-16:26:26.696 6d3c Level-0 table #158: 1330205 bytes OK
+2025/04/10-16:26:26.698 6d3c Delete type=0 #151
+2025/04/10-16:26:26.712 6d3c Compacting 1@1 + 4@2 files
+2025/04/10-16:26:26.951 6d3c Generated table #159@1: 64577 keys, 2217848 bytes
+2025/04/10-16:26:27.098 6d3c Generated table #160@1: 32490 keys, 2196751 bytes
+2025/04/10-16:26:27.223 6d3c Generated table #161@1: 29472 keys, 2191329 bytes
+2025/04/10-16:26:27.314 6d3c Generated table #162@1: 33559 keys, 751193 bytes
+2025/04/10-16:26:27.314 6d3c Compacted 1@1 + 4@2 files => 7357121 bytes
+2025/04/10-16:26:27.315 6d3c compacted to: files[ 0 0 4 0 0 0 0 ]
+2025/04/10-16:26:27.315 6d3c Delete type=2 #153
+2025/04/10-16:26:27.315 6d3c Delete type=2 #154
+2025/04/10-16:26:27.315 6d3c Delete type=2 #155
+2025/04/10-16:26:27.315 6d3c Delete type=2 #156
+2025/04/10-16:26:27.315 6d3c Delete type=2 #158
