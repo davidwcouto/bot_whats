@@ -90,7 +90,7 @@ const buscarPreco = (produto) => {
 
     // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
     const termosInvalidos = ["preta", "tela", "incell", "incel", "original", "orig", "nacional", "nac"];
-    const preposicoes = ["do", "da", "de", "tela", "samsung", "motorola"];
+    const preposicoes = ["do", "da", "de", "tela", "samsung", "motorola", "display", "combo"];
 
     const normalizar = (str) =>
         str
