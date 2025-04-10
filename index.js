@@ -24,7 +24,7 @@ try {
 
 // Criando o cliente do WhatsApp Web
 const client = new Client({
-    authStrategy: new LocalAuth(), // Salva a autenticação localmentee
+    authStrategy: new LocalAuth(), // Salva a autenticação localmente
         puppeteer: {
         headless: true,  // Garantir que o Chrome funcione no modo headless
             args: [
