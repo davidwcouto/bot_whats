@@ -91,6 +91,7 @@ const buscarPreco = (produto) => {
     // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
     const termosInvalidos = ["preta", "tela", "incell", "incel", "original", "orig", "nacional", "nac"];
     const preposicoes = ["do", "da", "de", "tela", "samsung", "motorola", "display", "combo"];
+];
 
     const normalizar = (str) =>
         str
@@ -116,17 +117,23 @@ const buscarPreco = (produto) => {
         return "❌ Digite o nome completo do produto.";
     }
 
-    const item = data.find(row => {
-        if (!row.Produto) return false;
+const item = data.find(row => {
+    if (!row.Produto) return false;
 
-        const nomeProduto = normalizar(row.Produto);
-        const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
+    const nomeProduto = normalizar(row.Produto);
+    const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
 
-        return (
-            nomeProduto.includes(nomeNormalizado) ||
-            nomeProdutoSemEspacos.includes(nomeSemEspacos)
-        );
-    });
+    // Verificação exata primeiro
+    if (nomeProduto === nomeNormalizado || nomeProdutoSemEspacos === nomeSemEspacos) {
+        return true;
+    }
+
+    // Depois, verificação por "includes"
+    return (
+        nomeProduto.includes(nomeNormalizado) ||
+        nomeProdutoSemEspacos.includes(nomeSemEspacos)
+    );
+});
 
     if (!item) {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
