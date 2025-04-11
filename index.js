@@ -227,15 +227,6 @@ client.on("message", async (message) => {
   const msg = message.body.toLowerCase().trim();
   const chat = await message.getChat();
   
-  
-	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
-		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
-		usuariosPendentes.add(chatId);
-		clientesAtendidos.add(chatId);
-		await chat.markUnread();
-		return;
-	}
-  
       // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignoraa
     if (message.hasMedia) {
         console.log(`Mensagem com mídia ignorada de ${chatId}`);
@@ -284,6 +275,15 @@ client.on("message", async (message) => {
         return;
     }
 	
+	  
+  
+	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
+		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
+		usuariosPendentes.add(chatId);
+		clientesAtendidos.add(chatId);
+		await chat.markUnread();
+		return;
+	}
 	
 	if (msg === "1" || msg === "2") {
 		clientesAtendidos.add(chatId); // Marca o cliente como atendidooo
