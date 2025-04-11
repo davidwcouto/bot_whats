@@ -86,6 +86,8 @@ const removerSilencedChats = (chatId) => {
 
 // Função para buscar preços
 const buscarPreco = (produto) => {
+	const excecoes = ["oi", "ola"]; // Adicione aqui os nomes exatos que quer preservar
+
     if (!produto) return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
 
     // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
@@ -107,9 +109,17 @@ const removerPreposicoes = (str) => {
         .join(' ')
         .trim();
 };
+    let nomeNormalizado, nomeSemEspacos;
 
-    const nomeNormalizado = removerPreposicoes(normalizar(produto));
-    const nomeSemEspacos = removerEspacos(nomeNormalizado);
+	const produtoLimpo = produto.toLowerCase().trim();
+	if (excecoes.includes(produtoLimpo)) {
+		nomeNormalizado = produtoLimpo;
+		nomeSemEspacos = removerEspacos(produtoLimpo);
+	} else {
+			nomeNormalizado = removerPreposicoes(normalizar(produto));
+			nomeSemEspacos = removerEspacos(nomeNormalizado);
+	}
+
 
     if (termosInvalidos.includes(nomeNormalizado)) {
         return "❌ Digite o nome completo do produto.";
