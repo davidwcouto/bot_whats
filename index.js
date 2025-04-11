@@ -86,8 +86,6 @@ const removerSilencedChats = (chatId) => {
 
 // Função para buscar preços
 const buscarPreco = (produto) => {
-	const excecoes = ["oi", "ola"]; // Adicione aqui os nomes exatos que quer preservar
-
     if (!produto) return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
 
     // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
@@ -110,20 +108,8 @@ const removerPreposicoes = (str) => {
         .trim();
 };
 
-const produtoOriginal = produto.toLowerCase().trim();
-const produtoNormalizado = normalizar(produtoOriginal);
-
-// Verifica se o produto está na lista de exceções
-const estaNaListaDeExcecoes = excecoes.some(ex => normalizar(ex) === produtoNormalizado);
-
-if (estaNaListaDeExcecoes) {
-    nomeNormalizado = produtoNormalizado;
-    nomeSemEspacos = removerEspacos(produtoNormalizado);
-} else {
-    nomeNormalizado = removerPreposicoes(produtoNormalizado);
-    nomeSemEspacos = removerEspacos(nomeNormalizado);
-}
-
+    const nomeNormalizado = removerPreposicoes(normalizar(produto));
+    const nomeSemEspacos = removerEspacos(nomeNormalizado);
 
     if (termosInvalidos.includes(nomeNormalizado)) {
         return "❌ Digite o nome completo do produto.";
@@ -369,6 +355,14 @@ if (!clientesAtendidos.has(chatId)) {
 			if (chat) await chat.markUnread(); // Marca a mensagem como não lida	
         return;
 }		
+
+	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
+		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
+		usuariosPendentes.add(chatId);
+		clientesAtendidos.add(chatId);
+		await chat.markUnread();
+		return;
+	}
 
     // Consulta de preço pelo nome do produto
     const respostaPreco = buscarPreco(msg);
