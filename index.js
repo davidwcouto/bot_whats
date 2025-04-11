@@ -227,6 +227,15 @@ client.on("message", async (message) => {
   const msg = message.body.toLowerCase().trim();
   const chat = await message.getChat();
   
+  
+	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
+		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
+		usuariosPendentes.add(chatId);
+		clientesAtendidos.add(chatId);
+		await chat.markUnread();
+		return;
+	}
+  
       // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignora
     if (message.hasMedia) {
         console.log(`Mensagem com mídia ignorada de ${chatId}`);
@@ -355,14 +364,6 @@ if (!clientesAtendidos.has(chatId)) {
 			if (chat) await chat.markUnread(); // Marca a mensagem como não lida	
         return;
 }		
-
-	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
-		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
-		usuariosPendentes.add(chatId);
-		clientesAtendidos.add(chatId);
-		await chat.markUnread();
-		return;
-	}
 
     // Consulta de preço pelo nome do produto
     const respostaPreco = buscarPreco(msg);
