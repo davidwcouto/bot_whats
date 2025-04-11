@@ -236,7 +236,7 @@ client.on("message", async (message) => {
 		return;
 	}
   
-      // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignora
+      // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignoraa
     if (message.hasMedia) {
         console.log(`Mensagem com mídia ignorada de ${chatId}`);
         return;
