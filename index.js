@@ -109,16 +109,20 @@ const removerPreposicoes = (str) => {
         .join(' ')
         .trim();
 };
-    let nomeNormalizado, nomeSemEspacos;
 
-	const produtoLimpo = produto.toLowerCase().trim();
-	if (excecoes.includes(produtoLimpo)) {
-		nomeNormalizado = produtoLimpo;
-		nomeSemEspacos = removerEspacos(produtoLimpo);
-	} else {
-			nomeNormalizado = removerPreposicoes(normalizar(produto));
-			nomeSemEspacos = removerEspacos(nomeNormalizado);
-	}
+const produtoOriginal = produto.toLowerCase().trim();
+const produtoNormalizado = normalizar(produtoOriginal);
+
+// Verifica se o produto está na lista de exceções
+const estaNaListaDeExcecoes = excecoes.some(ex => normalizar(ex) === produtoNormalizado);
+
+if (estaNaListaDeExcecoes) {
+    nomeNormalizado = produtoNormalizado;
+    nomeSemEspacos = removerEspacos(produtoNormalizado);
+} else {
+    nomeNormalizado = removerPreposicoes(produtoNormalizado);
+    nomeSemEspacos = removerEspacos(nomeNormalizado);
+}
 
 
     if (termosInvalidos.includes(nomeNormalizado)) {
