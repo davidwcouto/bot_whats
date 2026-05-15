@@ -1,6 +1,14 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
+process.on('unhandledRejection', err => {
+    console.error('UNHANDLED REJECTION:', err);
+});
+
+process.on('uncaughtException', err => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+});
+
 const db = mysql.createPool({
     host: process.env.MYSQLHOST,
     user: process.env.MYSQLUSER,
@@ -61,7 +69,13 @@ const client = new Client({
 		executablePath:process.env.PUPPETEER_EXECUTABLE_PATH,
 			args:[
 				'--no-sandbox',
-				'--disable-setuid-sandbox'
+				'--disable-setuid-sandbox',
+				'--disable-dev-shm-usage',
+				'--disable-accelerated-2d-canvas',
+				'--disable-gpu',
+				'--no-first-run',
+				'--no-zygote',
+				'--single-process'
 			]
 		}
 });
@@ -173,6 +187,10 @@ const removerPreposicoes = (str) => {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
 	}
 	ultimoProdutoConsultado.set(chatId, item);
+	
+	setTimeout(() => {
+    ultimoProdutoConsultado.delete(chatId);
+	}, 30 * 60 * 1000);
 
     return `💰 O preço de *${item.Produto}* é *R$ ${item.Preco}* \n\nPara fazer pedido digite 2️⃣\nVisualizar foto do produto digite 3️⃣`;
 };
@@ -334,6 +352,18 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
     }	
 }
 
+client.on('disconnected', (reason) => {
+    console.log('❌ Cliente desconectado:', reason);
+});
+
+client.on('auth_failure', msg => {
+    console.log('❌ Falha autenticação:', msg);
+});
+
+client.on('change_state', state => {
+    console.log('🔄 Estado mudou:', state);
+});
+
 client.on("message_revoke_everyone", async (after, before) => {
 
     if (!before) return;
@@ -408,6 +438,8 @@ client.on("message_create", async (message) => {
 
 // Evento de mensagem recebida
 client.on("message", async (message) => {
+	
+	try {
 	
 	if (message.from === "status@broadcast" || message.from.endsWith("@g.us")) {
 		return;
@@ -646,10 +678,40 @@ if (respostaPreco.startsWith("❌ Produto não encontrado")) {
 
 await client.sendMessage(chatId, respostaPreco);
 await chat.markUnread();
+
+    } catch (error) {
+
+        console.error("ERRO GERAL MESSAGE:", error);
+
+    }
 										
 });
 
 client.initialize();
+
+setInterval(async () => {
+
+    try {
+
+        const state = await client.getState();
+
+        console.log("📡 Estado atual:", state);
+
+        if (state !== "CONNECTED") {
+
+            console.log("⚠️ Cliente desconectado, reiniciando...");
+            process.exit(1);
+
+        }
+
+    } catch (err) {
+
+        console.log("Erro ao verificar estado:", err);
+        process.exit(1);
+
+    }
+
+}, 60000);
 
 app.use(express.urlencoded({ extended: true }));
 app.get("/", (req,res)=>{
