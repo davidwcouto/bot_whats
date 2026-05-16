@@ -29,6 +29,7 @@ const xlsx = require("xlsx");
 const puppeteer = require('puppeteer');
 const app = express();
 const port = process.env.PORT || 3000;
+const inicioBot = Math.floor(Date.now() / 1000);	
 const { DateTime } = require("luxon");
 const Tesseract = require("tesseract.js");
 const multer = require("multer");
@@ -440,7 +441,9 @@ client.on("message_create", async (message) => {
 client.on("message", async (message) => {
 	
 	try {
-	
+		if (message.fromMe) return;
+		if (message.timestamp < inicioBot - 10) return;
+
 	if (message.from === "status@broadcast" || message.from.endsWith("@g.us")) {
 		return;
 	}
