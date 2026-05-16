@@ -695,11 +695,9 @@ setInterval(async () => {
 
         const state = await client.getState();
 
-        console.log("📡 Estado atual:", state);
-
         if (state !== "CONNECTED") {
 
-            console.log("⚠️ Cliente desconectado, reiniciando...");
+            console.log("❌ Estado inválido:", state);
             process.exit(1);
 
         }
