@@ -52,7 +52,7 @@ cloudinary.config({
 let allowedContacts = [];
 try {
   const contactsData = fs.readFileSync("allowed.txt", "utf8");
-  // Divide o conteúdo em linhas, remove espaços e filtra linhas vaziass
+  // Divide o conteúdo em linhas, remove espaços e filtra linhas vazias
   allowedContacts = contactsData
     .split("\n")
     .map(line => line.trim())
