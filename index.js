@@ -830,3 +830,9 @@ app.get("/health", (req, res) => {
 app.listen(port, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${port}`);
 });
+
+// Reinicia o bot automaticamente a cada 24 horas
+setTimeout(() => {
+  console.log("♻️ Reiniciando o bot para limpar memória...");
+  process.exit(0);
+}, 24 * 60 * 60 * 1000);
