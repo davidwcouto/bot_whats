@@ -1,2 +1,3 @@
-2026/05/15-22:08:28.432 541c Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Service Worker\Database since it was missing.
-2026/05/15-22:08:28.439 541c Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Service Worker\Database/MANIFEST-000001
+2026/05/26-10:12:46.821 1be0 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Service Worker\Database/MANIFEST-000001
+2026/05/26-10:12:46.821 1be0 Recovering log #3
+2026/05/26-10:12:46.822 1be0 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Service Worker\Database/000003.log 
