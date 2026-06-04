@@ -1,14 +1,54 @@
+const mysql = require('mysql2/promise');
+require('dotenv').config();
+
+process.on('unhandledRejection', err => {
+    console.error('UNHANDLED REJECTION:', err);
+});
+
+process.on('uncaughtException', err => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+const db = mysql.createPool({
+    host: process.env.MYSQLHOST,
+    user: process.env.MYSQLUSER,
+    password: process.env.MYSQLPASSWORD,
+    database: process.env.MYSQLDATABASE,
+    port: process.env.MYSQLPORT,
+    waitForConnections: true,
+    connectionLimit: 10
+});
+
+const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
+const path = require("path");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const express = require('express');
 const qrcode = require("qrcode-terminal");
 const xlsx = require("xlsx");
-const fs = require("fs");
 const puppeteer = require('puppeteer');
 const app = express();
-const port = process.env.PORT || 3000;  // A Fly.io fornece a variável PORTT
+const port = process.env.PORT || 3000;
+const inicioBot = Math.floor(Date.now() / 1000);	
 const { DateTime } = require("luxon");
+const Tesseract = require("tesseract.js");
+const multer = require("multer");
+const storage = multer.diskStorage({
+    destination: "uploads/",
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
 
-// --- Carregar contatos autorizados a partir do arquivo de texto ---
+const upload = multer({ storage });
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// --- Carregar contatos autorizados a partir do arquivo de textoo ---
 let allowedContacts = [];
 try {
   const contactsData = fs.readFileSync("allowed.txt", "utf8");
@@ -24,22 +64,21 @@ try {
 
 // Criando o cliente do WhatsApp Web
 const client = new Client({
-    authStrategy: new LocalAuth(), // Salva a autenticação localmente
-        puppeteer: {
-        headless: true,  // Garantir que o Chrome funcione no modo headless
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
-        }
+	authStrategy: new LocalAuth(),
+		puppeteer:{
+		headless:true,
+		executablePath:process.env.PUPPETEER_EXECUTABLE_PATH,
+			args:[
+				'--no-sandbox',
+				'--disable-setuid-sandbox'
+			]
+		}
 });
 
 let atendimentoHumano = new Set(); // Armazena usuários em atendimento humano
 let clientesAtendidos = new Set(); // Garante que a mensagem inicial só seja enviada uma vez por cliente
-let usuariosPendentes = new Set(); // Armazena usuários que ainda não escolheram 1 ou 2
 let silencedChats = new Set(); // Lista de conversas silenciadas
 let ultimoProdutoConsultado = new Map(); // Guardar o últiimo produto consultadoo
-
 
 // Gera o QR Code para autenticação
 client.on("qr", (qr) => {
@@ -51,7 +90,7 @@ client.on("qr", (qr) => {
 client.on('ready', async () => {
     console.log("🤖 Bot conectado e pronto para uso!");
 	
-	  const page = await client.pupPage;
+	  const page = await client.pupPage; 
 	
 	  await page.evaluate(() => {
     if (window.WWebJS && window.WWebJS.sendSeen) {
@@ -98,7 +137,7 @@ const removerSilencedChats = (chatId) => {
 const buscarPreco = (produto, chatId) => {
     if (!produto) return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
 
-    // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erroo
+    // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
     const termosInvalidos = ["preta", "tela", "incell", "incel", "original", "orig", "nacional", "nac", "com aro"];
     const preposicoes = ["do", "da", "de", "tela", "samsung", "motorola", "display", "combo", "frontal", "xiaomi"];
     const normalizar = (str) =>
@@ -143,16 +182,20 @@ const removerPreposicoes = (str) => {
         return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
 	}
 	ultimoProdutoConsultado.set(chatId, item);
+	
+	setTimeout(() => {
+    ultimoProdutoConsultado.delete(chatId);
+	}, 30 * 60 * 1000);
 
     return `💰 O preço de *${item.Produto}* é *R$ ${item.Preco}* \n\nPara fazer pedido digite 2️⃣\nVisualizar foto do produto digite 3️⃣`;
 };
 
 const horarioAtendimento = {
     inicio: 9,        // 09:00
-    fim: 18,          // 18:00
+    fim: 17,          // 18:00
     minutosFim: 00,   // Até 18:30
-    intervaloInicio: 12,   // Início do intervalo de não atendimento (12:00)
-    intervaloFim: 12,     // Fim do intervalo de não atendimento (12:00)
+    intervaloInicio: 12,   // Início do intervalo de não atendimento
+    intervaloFim: 12,     // Fim do intervalo de não atendimento
 };
 
 // Horário de atendimento especial para sabado
@@ -160,8 +203,8 @@ const horarioSabado = {
     inicio: 9,        // 09:00
     fim: 17,          // 18:00 (horário reduzido para sabado)
     minutosFim: 00,    // Sem minutos após as 18:00
-    intervaloInicio: 12,   // Início do intervalo de não atendimento (12:00)
-    intervaloFim: 12,     // Fim do intervalo de não atendimento (13:00)
+    intervaloInicio: 12,   // Início do intervalo de não atendimentoo
+    intervaloFim: 12,     // Fim do intervalo de não atendimento
 };
 
 // Função para verificar se está dentro do horário de atendimento
@@ -192,30 +235,180 @@ const estaDentroDoHorario = () => {
 
     // Horário normal de segunda a sexta (09:00 - 18:00 com intervalo de almoço)
     if (horaAtual >= horarioAtendimento.inicio && horaAtual < horarioAtendimento.intervaloInicio) {
-        return false; // Entre 09:00 e 12:00
+        return true; // Entre 09:00 e 12:00
     }
 
     if (horaAtual >= horarioAtendimento.intervaloFim && horaAtual < horarioAtendimento.fim) {
-        return false; // Entre 13:00 e 18:00
+        return true; // Entre 13:00 e 18:00
     }
 
     // Verifica se a hora está dentro do intervalo de 18:00 até 18:30
     if (horaAtual === horarioAtendimento.fim && minutosAtuais <= horarioAtendimento.minutosFim) {
-        return false; // Entre 18:00 e 18:30
+        return true; // Entre 18:00 e 18:30
     }
 
     return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
 };
 
+// FUNÇÃO PARA ENVIAR LISTA DE TRANSMISSAO
+async function enviarMensagemEmMassa(texto, caminhoImagem) {
+    console.log("🚀 Iniciando envio em massa...");
+	
+	if (!caminhoImagem) {
+    console.log("Sem imagem, enviando só texto...");
+    
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+        await client.sendMessage(chatId, texto);
+		
+		console.log("✅ Enviado para:", numero);
+		
+		const delay = Math.floor(Math.random() * 4000) + 6000;
+		await new Promise(r => setTimeout(r, delay));
+		}
+
+    console.log("✅ Disparo finalizado.");
+    return;
+}
+
+	if (path.extname(caminhoImagem).toLowerCase() === ".jpeg" || path.extname(caminhoImagem).toLowerCase() === ".jpg" || path.extname(caminhoImagem).toLowerCase() === ".png") {
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+
+        try {
+            if (caminhoImagem) {
+				const ext = path.extname(caminhoImagem).toLowerCase();
+
+				let mimetype = "image/jpeg";
+
+				const media = new MessageMedia(
+					mimetype,
+					fs.readFileSync(caminhoImagem, { encoding: "base64" })
+				);
+				
+				await client.sendMessage(chatId, media, {
+                    caption: texto
+                });
+				
+            } else {
+                await client.sendMessage(chatId, texto);
+            }
+
+            console.log("✅ Enviado para:", numero);
+
+            const delay = Math.floor(Math.random() * 4000) + 4000;
+			await new Promise(r => setTimeout(r, delay));
+
+        } catch (erro) {
+            console.log("❌ Erro ao enviar para:", numero);
+        }
+    }}
+	
+	if (path.extname(caminhoImagem).toLowerCase() === ".mp4" || path.extname(caminhoImagem).toLowerCase() === ".mov") {
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+
+        try {
+            if (caminhoImagem) {
+				const ext = path.extname(caminhoImagem).toLowerCase();
+
+				let mimetype = "video/mp4";
+
+				const media = new MessageMedia(
+					mimetype,
+					fs.readFileSync(caminhoImagem, { encoding: "base64" })
+				);
+				
+				await client.sendMessage(chatId, media, {
+                    caption: texto
+                });
+				
+            } else {
+                await client.sendMessage(chatId, texto);
+            }
+
+            console.log("✅ Enviado para:", numero);
+
+            const delay = Math.floor(Math.random() * 4000) + 4000;
+			await new Promise(r => setTimeout(r, delay));
+
+        } catch (erro) {
+            console.log("❌ Erro ao enviar para:", numero);
+        }
+    }}
+
+    console.log("✅ Disparo finalizado.");
+	
+    if (fs.existsSync(caminhoImagem)) {
+        fs.unlink(caminhoImagem, (err) => {
+            if (err) console.log("Erro ao excluir:", err.message);
+            else console.log("🗑️ Arquivo removido");
+        });
+    }	
+}
+
+client.on('disconnected', (reason) => {
+    console.log('❌ Cliente desconectado:', reason);
+});
+
+client.on('auth_failure', msg => {
+    console.log('❌ Falha autenticação:', msg);
+});
+
+client.on('change_state', state => {
+    console.log('🔄 Estado mudou:', state);
+});
+
+client.on("message_revoke_everyone", async (after, before) => {
+
+    if (!before) return;
+	
+	if (before.from === "status@broadcast" || before.from.endsWith("@g.us")) {
+		return;
+	}
+
+    let numeroAtendente = null;
+    let numeroCliente = null;
+
+    if (before.fromMe) {
+        // Loja enviou mensagem e apagou
+        numeroAtendente = before.from.split("@")[0];
+        numeroCliente = before.to.split("@")[0];
+    } else {
+        // Cliente enviou e apagou
+        numeroCliente = before.from.split("@")[0];
+        numeroAtendente = before.to.split("@")[0];
+    }
+
+    try {
+        await db.execute(`
+            INSERT INTO mensagens_excluidas 
+            (message_id, chat, body, numero_atendente, numero_cliente, data_envio, data_exclusao)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+            before.id.id,
+            before.from,
+            before.body || "[MÍDIA]",
+            numeroAtendente,
+            numeroCliente,
+            new Date(before.timestamp * 1000),
+            new Date()
+        ]);
+
+        console.log("Mensagem excluída salva com números separados.");
+
+    } catch (error) {
+        console.error("Erro ao salvar mensagem excluída:", error.message);
+    }
+});
+
 // Evento para DETECTAR mensagens enviadas pelo próprio usuário e SILENCIAR a conversa
 client.on("message_create", async (message) => {
+	
     // só processa mensagens enviadas pelo bot
     if (!message.fromMe) return;
 
     const chatId = message.to || message.from;
-
-    // 🖼️ IGNORA mensagens com mídia (foto, vídeo, áudio, doc)
-    if (message.hasMedia) return;
 
     // garante que body nunca seja undefined
     const body = message.body || "";
@@ -240,30 +433,111 @@ client.on("message_create", async (message) => {
 
 // Evento de mensagem recebida
 client.on("message", async (message) => {
-  const chatId = message.from;
-  // Extrai o número do remetente, removendo a parte "@c.us"
-  const phone = chatId.split("@")[0];
-  const msg = message.body.toLowerCase().trim();
-  const chat = await message.getChat();
+	
+	try {
+		if (message.fromMe) return;
+		if (message.timestamp < inicioBot - 10) return;
+
+	if (message.from === "status@broadcast" || message.from.endsWith("@g.us")) {
+		return;
+	}
+	
+	const chatId = message.from;
+	const contact = await message.getContact();
+	const msg = message.body.toLowerCase().trim();
+	const chat = await message.getChat();
+	let phone = contact.number;
   
-      // Se a mensagem contém mídia (foto, vídeo, áudio, documento), o bot ignoraa
-    if (message.hasMedia) {
-        console.log(`Mensagem com mídia ignorada de ${chatId}`);
-        return;
+	if (message.hasMedia) {
+		try {
+
+		const media = await message.downloadMedia();
+		
+        if (!media) {
+            console.log("Erro ao baixar mídia");
+            return;
+        }
+		
+        const mimetype = media.mimetype;
+		
+		        // ✅ permitir apenass PDF e JPEG
+        const tiposPermitidos = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
+		
+        if (!tiposPermitidos.includes(mimetype)) {
+            console.log("Arquivo ignorado:", mimetype);
+            return; // ignora outros tipos
+        }	
+		
+		let ehComprovante = true;
+		
+        if (mimetype.startsWith("image/")) {
+			
+			if (media.data.length > 3000000) return; // proteção
+			
+            const resultado = await Tesseract.recognize(`data:${mimetype};base64,${media.data}`,'por');		
+			
+			const texto = resultado.data.text.toLowerCase();
+
+			console.log("Texto detectado:", texto);
+		
+			const palavrasChave = ["pix","comprovante","pagamento","valor","r$","transferencia","enviado","recebido"];
+			
+            ehComprovante = palavrasChave.some(p =>texto.includes(p));
+		
+			if (!ehComprovante) {
+				console.log("Imagem ignorada (não é comprovante)");
+				return;
+			}
+		}
+		
+		const agora = DateTime.now().setZone("America/Sao_Paulo").toFormat("dd-MM-yyyy_HH-mm-ss-SSS");
+        const ext = mimetype.split("/")[1].split(";")[0];
+        const nomeArquivo = `comp_${agora}_${phone}.${ext}`;
+		const dataHoje = DateTime.now().setZone("America/Sao_Paulo").toFormat("yyyy-MM-dd");
+		
+		        // 🔥 upload para Cloudinary
+        const upload = await cloudinary.uploader.upload(
+            `data:${mimetype};base64,${media.data}`,
+            {
+                folder: `comprovantes_sapucaia/${dataHoje}`,
+                public_id: nomeArquivo,
+                resource_type: "auto"
+            }
+        );
+
+        console.log("Comprovante enviado:", upload.secure_url);
+
+    } catch (erro) {
+        console.error("Erro ao salvar comprovante:", erro.message);
     }
+    return;
+}
   
       // Se o chat estiver silenciado, ignorar a mensagem
-    if (silencedChats.has(chatId)) {
-        console.log(`Chat silenciado (${chatId}), ignorando mensagem.`);
-        return;
-    }
+	if (silencedChats.has(chatId) && !message.hasMedia) {
+		console.log(`Chat silenciado (${phone}), ignorando mensagem.`);
+		return;
+	}
 
   // Verifica se o remetente está na lista de contatos autorizados
   if (!allowedContacts.includes(phone)) {
-    console.log(`Número não autorizado (${phone}). Mensagem ignorada.`);
-    return;
+	console.log(`Número não autorizado (${phone}). Mensagem ignorada.`);
+	return;
   }
   
+// comando para disparo em massa
+if (msg === "/disparo") {
+
+    const mensagem = `Olá! 👋
+Estamos passando para informar uma atualização importante.
+Caso precise de atendimento basta responder esta mensagem.
+Atenciosamente
+*Coutech Cell*`;
+    await client.sendMessage(chatId, "🚀 Iniciando envio para todos os contatos...");
+    await enviarMensagemEmMassa(mensagem);
+    return;
+}
+
   	// Enviar foto para o cliente
 if (msg === "3") {
     const produto = ultimoProdutoConsultado.get(chatId);
@@ -288,11 +562,10 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 
     // 🔓 libera nova consulta
 	clientesAtendidos.delete(chatId);
-	usuariosPendentes.delete(chatId);
 
     await chat.markUnread();
     return;
-}
+	}
 
     if (msg === "atendimento" || msg === "pedido") {
         if (estaDentroDoHorario()) {
@@ -304,7 +577,7 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 		await chat.markUnread();
 
       } else {
-			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo devido ao feriado de carnaval. Voltaremos o atendimento normal na quarta feira dia 18/02.\n\nAgradecemos pela sua compreensão! 😊\n\nAtenciosamente,\nCoutech Cell");
+			await client.sendMessage(chatId, "⏳ Devido ao feriado de Corpus Christi hoje encerramos nossas atividades as 17h. Voltaremos o atendimento normal amanha dia 05/06.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
 		}
         return;
     }
@@ -321,11 +594,8 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
         return;
     }
 	
-	  
-  
 	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
 		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
-		usuariosPendentes.add(chatId);
 		clientesAtendidos.add(chatId);
 		await chat.markUnread();
 		return;
@@ -347,13 +617,12 @@ if (!clientesAtendidos.has(chatId)) {
         return;
     }
 
-    // Se não parece uma tentativa de consulta válida, manda mensagem orientandoo
+    // Se não parece uma tentativa de consulta válida, manda mensagem orientando
     try {
         await client.sendMessage(
             chatId,
             "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
         );
-        usuariosPendentes.add(chatId);
         clientesAtendidos.add(chatId);
 		await chat.markUnread();
     } catch (error) {
@@ -367,23 +636,6 @@ if (!clientesAtendidos.has(chatId)) {
 }
 	}
 
-  // Verifica se o usuário ainda não escolheu 1 ou 2
-  if (usuariosPendentes.has(chatId)) {
-
-    if (msg === "1" || msg === "2") {
-      usuariosPendentes.delete(chatId); // Remove da lista após escolher
-    } else {
-
-      // Laço de repetição continua até que o cliente escolha 1 ou 2
-      await client.sendMessage(chatId, "Digite a opção *1️⃣* ou *2️⃣* ");
-	          // Obter o chat e marcar a mensagem como não lida
-       const chat = await message.getChat(); // Obtém o chat da mensagem
-       await chat.markUnread(); // Marca a mensagem como não lida
-	  
-      return;
-    }
-  }
-
 		// Lógica para responder às opções "1" e "2"
     if (msg === "2") {
         if (estaDentroDoHorario()) {
@@ -394,29 +646,193 @@ if (!clientesAtendidos.has(chatId)) {
 			await chat.markUnread();
 		
       } else {
-            await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo devido ao feriado de carnaval. Voltaremos o atendimento normal na quarta feira dia 18/02.\n\nAgradecemos pela sua compreensão! 😊\n\nAtenciosamente,\nCoutech Cell");
-
+            await client.sendMessage(chatId, "⏳ Devido ao feriado de Corpus Christi hoje encerramos nossas atividades as 17h. Voltaremos o atendimento normal amanha dia 05/06.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
 		}
         return;
     }
 
 	else if (msg === "1") {
     await client.sendMessage(chatId, "Digite o nome do produto para consultar o valor.\nExemplos:\n A12 com aro\n G20 sem aro\n k41s com aro\n iPhone 8 plus\n iPhone 12 incell\n iPhone 12 original\n Redmi 12c com aro\n Redmi Note 8 sem aro");
-		   // Remove o cliente da lista de atendimento após 1 minuto
+		   // Remove o cliente da lista de atendimento após 1 minutoo
 			removerClientesAtendidos(chatId);
         return;
 }		
 
-    // Consulta de preço pelo nome do produto
-    const respostaPreco = buscarPreco(msg, chatId);
-    await client.sendMessage(chatId, respostaPreco);
-    await chat.markUnread();
-											
+const respostaPreco = buscarPreco(msg, chatId);
+
+if (respostaPreco.startsWith("❌ Produto não encontrado")) {
+       if (estaDentroDoHorario()) {
+       atendimentoHumano.add(chatId);
+       await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n📞 Vou te encaminhar para um atendente.");
+	   removerAtendimentoHumano(chatId);
+       removerClientesAtendidos(chatId);
+		await chat.markUnread();
+     } else {
+         await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n⏳ Assim que nossa equipe estiver em horário de atendimento iremos lhe ajudar.");
+	 }
+       return;
+}
+
+await client.sendMessage(chatId, respostaPreco);
+await chat.markUnread();
+
+    } catch (error) {
+
+        console.error("ERRO GERAL MESSAGE:", error);
+
+    }
+										
 });
 
 client.initialize();
 
+setInterval(async () => {
+
+    try {
+
+        const state = await client.getState();
+
+        if (state !== "CONNECTED") {
+
+            console.log("❌ Estado inválido:", state);
+            process.exit(1);
+
+        }
+
+    } catch (err) {
+
+        console.log("Erro ao verificar estado:", err);
+        process.exit(1);
+
+    }
+
+}, 60000);
+
+app.use(express.urlencoded({ extended: true }));
+app.get("/", (req,res)=>{
+res.redirect("/painel")
+});
+app.get("/painel", (req, res) => {
+res.send(`
+<html>
+<head>
+<title>Painel de Disparo</title>
+<style>
+body{font-family:Arial;background:#f4f6f9;padding:40px}
+.container{max-width:600px;background:white;padding:30px;border-radius:8px}
+textarea{width:100%;height:150px;font-size:16px}
+button{padding:12px 20px;background:#27ae60;color:white;border:none;font-size:16px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>📢 Disparo em Massa</h2>
+<form method="POST" action="/disparo" enctype="multipart/form-data">
+<textarea name="mensagem" placeholder="Digite a mensagem aqui"></textarea>
+<br><br>
+<input type="file" name="imagem" accept="image/*">
+<br><br>
+<button type="submit">Enviar para todos</button>
+</form>
+</div>
+</body>
+</html>
+`);
+});
+
+app.post("/disparo", upload.single("imagem"), async (req, res) => {
+    const mensagem = req.body.mensagem;
+
+    let caminhoImagem = null;
+
+    if (req.file) {
+        caminhoImagem = req.file.path;
+    }
+
+    enviarMensagemEmMassa(mensagem, caminhoImagem);
+
+    res.send("🚀 Disparo iniciado!");
+});
+
+app.get("/excluidas", async (req, res) => {
+    try {
+        const [rows] = await db.execute(`
+            SELECT * FROM mensagens_excluidas
+            ORDER BY data_exclusao DESC
+        `);
+
+        let html = `
+        <html>
+        <head>
+            <title>Painel - Mensagens Excluídas</title>
+            <style>
+                body { font-family: Arial; background:#f4f6f9; padding:20px; }
+                h1 { color:#333; }
+                table { width:100%; border-collapse: collapse; background:#fff; }
+                th, td { padding:10px; border:1px solid #ddd; font-size:14px; }
+                th { background:#2c3e50; color:white; }
+                tr:nth-child(even){ background:#f2f2f2; }
+                .cliente { color:#2980b9; font-weight:bold; }
+                .atendente { color:#27ae60; font-weight:bold; }
+                .msg { max-width:400px; word-wrap:break-word; }
+            </style>
+        </head>
+        <body>
+            <h1>📋 Mensagens Excluídas</h1>
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>Atendente</th>
+                    <th>Cliente</th>
+                    <th>Mensagem</th>
+                    <th>Data Envio</th>
+                    <th>Data Exclusão</th>
+                </tr>
+        `;
+
+        rows.forEach(row => {
+			const dataEnvio = new Date(row.data_envio).toLocaleString("pt-BR", {
+			timeZone: "America/Sao_Paulo"
+			});
+
+			const dataExclusao = new Date(row.data_exclusao).toLocaleString("pt-BR", {
+			timeZone: "America/Sao_Paulo"
+			});
+            html += `
+            <tr>
+                <td>${row.id}</td>
+				<td>${row.numero_atendente}</td>
+				<td>${row.numero_cliente}</td>
+                <td>${row.body}</td>
+				<td>${dataEnvio}</td>
+				<td>${dataExclusao}</td>
+
+            </tr>
+            `;
+        });
+
+        html += `
+            </table>
+        </body>
+        </html>
+        `;
+
+        res.send(html);
+    } catch (error) {
+        res.send("Erro ao carregar painel: " + error.message);
+    }
+});
+
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
 
 app.listen(port, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${port}`);
 });
+
+// Reinicia o bot automaticamente a cada 24 horas
+setTimeout(() => {
+  console.log("♻️ Reiniciando o bot para limpar memória...");
+  process.exit(0);
+}, 24 * 60 * 60 * 1000);
