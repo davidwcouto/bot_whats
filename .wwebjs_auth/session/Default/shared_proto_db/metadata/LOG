@@ -1,3 +1,2 @@
-2026/06/04-17:15:06.288 e68 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\shared_proto_db\metadata/MANIFEST-000001
-2026/06/04-17:15:06.290 e68 Recovering log #3
-2026/06/04-17:15:06.291 e68 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\shared_proto_db\metadata/000003.log 
+2026/06/08-14:41:39.005 e68 Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\shared_proto_db\metadata since it was missing.
+2026/06/08-14:41:39.011 e68 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\shared_proto_db\metadata/MANIFEST-000001

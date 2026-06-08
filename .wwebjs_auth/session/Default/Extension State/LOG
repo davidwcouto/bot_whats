@@ -1,3 +1,2 @@
-2026/06/04-17:15:06.310 5cb4 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Extension State/MANIFEST-000001
-2026/06/04-17:15:06.313 5cb4 Recovering log #3
-2026/06/04-17:15:06.313 5cb4 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Extension State/000003.log 
+2026/06/08-14:41:39.036 6068 Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Extension State since it was missing.
+2026/06/08-14:41:39.044 6068 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Extension State/MANIFEST-000001
