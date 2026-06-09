@@ -832,7 +832,7 @@ app.listen(port, '0.0.0.0', () => {
 });
 
 // Reinicia o bot automaticamente a cada 24 horas
-setTimeout(() => {
-  console.log("♻️ Reiniciando o bot para limpar memória...");
-  process.exit(0);
-}, 24 * 60 * 60 * 1000);
+// setTimeout(() => {
+//   console.log("♻️ Reiniciando o bot para limpar memória...");
+//   process.exit(0);
+// }, 24 * 60 * 60 * 1000);
