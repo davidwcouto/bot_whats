@@ -691,6 +691,17 @@ await chat.markUnread();
 console.log("Chromium path:", process.env.PUPPETEER_EXECUTABLE_PATH);
 console.log("Existe chromium:", fs.existsSync("/usr/bin/chromium"));
 
+const { execSync } = require("child_process");
+
+try {
+  console.log("Teste Chromium:");
+  console.log(execSync("/usr/bin/chromium --headless --no-sandbox --disable-gpu --dump-dom https://example.com", {
+    encoding: "utf8"
+  }).slice(0, 300));
+} catch (e) {
+  console.error("Erro teste Chromium:", e.stderr?.toString() || e.message);
+}
+
 client.initialize();
 
 setInterval(async () => {
