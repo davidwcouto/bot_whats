@@ -65,21 +65,14 @@ try {
 // Criando o cliente do WhatsApp Web
 const client = new Client({
 	authStrategy: new LocalAuth(),
-	  puppeteer: {
-		headless: true,
-		executablePath: "/usr/bin/chromium",
-		args: [
-		  "--no-sandbox",
-		  "--disable-setuid-sandbox",
-		  "--disable-dev-shm-usage",
-		  "--disable-gpu",
-		  "--disable-crash-reporter",
-		  "--disable-breakpad",
-		  "--no-first-run",
-		  "--no-default-browser-check",
-		  "--user-data-dir=/tmp/chrome-user-data"
-		]
-	  }
+		puppeteer:{
+		headless:true,
+		executablePath:process.env.PUPPETEER_EXECUTABLE_PATH,
+			args:[
+				'--no-sandbox',
+				'--disable-setuid-sandbox'
+			]
+		}
 });
 
 let atendimentoHumano = new Set(); // Armazena usuários em atendimento humano
