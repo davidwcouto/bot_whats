@@ -691,11 +691,11 @@ const { execSync } = require("child_process");
 
 try {
   console.log("Teste Chromium:");
-console.log(execSync('/usr/bin/chromium --headless=new --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --disable-crash-reporter --disable-breakpad --disable-crashpad --no-first-run --no-default-browser-check --no-proxy-server --user-data-dir=/tmp/chrome-user-data --dump-dom https://example.com', {
+console.log(execSync('/usr/bin/google-chrome-stable --headless=new --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --no-default-browser-check --no-proxy-server --user-data-dir=/tmp/chrome-user-data --dump-dom https://example.com', {
   encoding: "utf8"
 }).slice(0, 300));
 } catch (e) {
-  console.error("Erro teste Chromium:", e.stderr?.toString() || e.message);
+  console.log("Existe Chrome:", fs.existsSync("/usr/bin/google-chrome-stable"));
 }
 
 client.initialize();
