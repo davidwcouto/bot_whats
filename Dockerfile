@@ -31,5 +31,6 @@ RUN npm install
 COPY . .
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 CMD ["node","index.js"]
