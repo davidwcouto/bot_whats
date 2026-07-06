@@ -688,6 +688,9 @@ await chat.markUnread();
 										
 });
 
+console.log("Chromium path:", process.env.PUPPETEER_EXECUTABLE_PATH);
+console.log("Existe chromium:", fs.existsSync("/usr/bin/chromium"));
+
 client.initialize();
 
 setInterval(async () => {
