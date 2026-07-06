@@ -25,6 +25,7 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 RUN npm install
+RUN mkdir -p /tmp/chrome-user-data && chmod -R 777 /tmp/chrome-user-data
 
 COPY . .
 

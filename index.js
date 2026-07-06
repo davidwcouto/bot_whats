@@ -73,8 +73,13 @@ const client = new Client({
 		  "--disable-setuid-sandbox",
 		  "--disable-dev-shm-usage",
 		  "--disable-gpu",
+		  "--disable-crash-reporter",
+		  "--disable-breakpad",
 		  "--no-first-run",
-		  "--no-default-browser-check"
+		  "--no-default-browser-check",
+		  "--no-zygote",
+		  "--single-process",
+		  "--user-data-dir=/tmp/chrome-user-data"
 		]
 	  }
 });
@@ -695,9 +700,9 @@ const { execSync } = require("child_process");
 
 try {
   console.log("Teste Chromium:");
-  console.log(execSync("/usr/bin/chromium --headless --no-sandbox --disable-gpu --dump-dom https://example.com", {
-    encoding: "utf8"
-  }).slice(0, 300));
+	console.log(execSync('/usr/bin/chromium --headless=new --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --disable-crash-reporter --disable-breakpad --no-zygote --single-process --user-data-dir=/tmp/chrome-user-data --dump-dom https://example.com', {
+	  encoding: "utf8"
+	}).slice(0, 300));
 } catch (e) {
   console.error("Erro teste Chromium:", e.stderr?.toString() || e.message);
 }
