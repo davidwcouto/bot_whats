@@ -1,0 +1,20 @@
+[phases.setup]
+nixPkgs = [
+  "nodejs_20",
+  "chromium",
+  "nss",
+  "nspr",
+  "atk",
+  "at-spi2-atk",
+  "cups",
+  "drm",
+  "dbus",
+  "expat",
+  "libxkbcommon",
+  "pango",
+  "cairo",
+  "alsa-lib",
+  "mesa",
+  "glib",
+  "gtk3"
+]
