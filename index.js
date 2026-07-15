@@ -445,6 +445,7 @@ client.on("message", async (message) => {
 	const chatId = message.from;
 	const contact = await message.getContact();
 	const msg = message.body.toLowerCase().trim();
+	const chat = await message.getChat();	
 	let phone = contact.number;
   
 	if (message.hasMedia) {
