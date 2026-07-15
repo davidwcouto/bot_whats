@@ -99,11 +99,6 @@ client.on('ready', async () => {
   });
 });
 
-console.log(
-    "VERSÃO WHATSAPP-WEB.JS:",
-    require("whatsapp-web.js/package.json").version
-);
-
 // Carrega a planilha
 let data = [];
 try {
@@ -363,6 +358,56 @@ client.on('auth_failure', msg => {
 client.on('change_state', state => {
     console.log('🔄 Estado mudou:', state);
 });
+
+function esperar(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function baixarMidiaComTentativas(message) {
+    let ultimoErro;
+
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+        try {
+            console.log(`⬇️ Tentativa ${tentativa} de baixar mídia`);
+
+            if (tentativa > 1) {
+                await esperar(2000);
+
+                if (typeof message.reload === "function") {
+                    try {
+                        await message.reload();
+                        console.log("🔄 Mensagem recarregada");
+                    } catch (erroReload) {
+                        console.log(
+                            "Falha ao recarregar:",
+                            erroReload?.message || erroReload
+                        );
+                    }
+                }
+            }
+
+            const media = await baixarMidiaComTentativas(message);
+
+            if (media?.data && media?.mimetype) {
+                return media;
+            }
+
+            ultimoErro = new Error(
+                "A mídia foi retornada sem conteúdo"
+            );
+
+        } catch (erro) {
+            ultimoErro = erro;
+
+            console.log(
+                `❌ Tentativa ${tentativa} falhou:`,
+                erro?.message || erro
+            );
+        }
+    }
+
+    throw ultimoErro || new Error("Falha ao baixar mídia");
+}
 
 client.on("message_revoke_everyone", async (after, before) => {
 
