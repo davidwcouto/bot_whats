@@ -443,9 +443,19 @@ client.on("message", async (message) => {
 	}
 	
 	const chatId = message.from;
-	const contact = await message.getContact();
 	const msg = message.body.toLowerCase().trim();
-	let phone = contact.number;
+
+	let phone;
+
+	if (chatId.endsWith("@lid")) {
+		const resultado = await client.getContactLidAndPhone([chatId]);
+
+		if (resultado && resultado.length > 0 && resultado[0].pn) {
+			phone = String(resultado[0].pn).replace("@c.us", "");
+		}
+	} else {
+		phone = chatId.replace("@c.us", "");
+	}
   
 	if (message.hasMedia) {
 		try {
