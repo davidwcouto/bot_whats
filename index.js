@@ -502,9 +502,7 @@ if (message.hasMedia) {
 				return;
 			}
 
-			console.log("1️⃣ Tentando baixar a mídia...");
 			media = await message.downloadMedia();
-			console.log("✅ Mídia baixada com sucesso");
         } catch (erroDownload) {
             console.error("❌ ERRO NO DOWNLOAD DA MÍDIA");
             console.error("Mensagem:", erroDownload?.message);
@@ -518,12 +516,6 @@ if (message.hasMedia) {
             console.log("❌ downloadMedia retornou null ou undefined");
             return;
         }
-
-        console.log("2️⃣ Dados da mídia:", {
-            mimetype: media.mimetype,
-            possuiData: Boolean(media.data),
-            tamanhoBase64: media.data?.length
-        });
 
         if (!media.data || !media.mimetype) {
             console.log("❌ Mídia sem conteúdo ou sem mimetype");
@@ -558,7 +550,6 @@ if (message.hasMedia) {
 
         if (mimetype.startsWith("image/")) {
             try {
-                console.log("3️⃣ Iniciando OCR...");
 
                 const resultado = await Tesseract.recognize(
                     `data:${mimetype};base64,${media.data}`,
@@ -568,7 +559,6 @@ if (message.hasMedia) {
                 const texto = String(resultado?.data?.text || "")
                     .toLowerCase();
 
-                console.log("✅ OCR concluído");
                 console.log("Texto detectado:", texto);
 
                 const palavrasChave = [
