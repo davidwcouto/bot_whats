@@ -540,11 +540,6 @@ if (message.hasMedia) {
         }
 
         const tamanhoBytes = Buffer.byteLength(media.data, "base64");
-        console.log(
-            "Tamanho real:",
-            (tamanhoBytes / 1024 / 1024).toFixed(2),
-            "MB"
-        );
 
         let ehComprovante = true;
 
@@ -558,8 +553,6 @@ if (message.hasMedia) {
 
                 const texto = String(resultado?.data?.text || "")
                     .toLowerCase();
-
-                console.log("Texto detectado:", texto);
 
                 const palavrasChave = [
                     "pix",
