@@ -359,56 +359,6 @@ client.on('change_state', state => {
     console.log('🔄 Estado mudou:', state);
 });
 
-function esperar(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function baixarMidiaComTentativas(message) {
-    let ultimoErro;
-
-    for (let tentativa = 1; tentativa <= 3; tentativa++) {
-        try {
-            console.log(`⬇️ Tentativa ${tentativa} de baixar mídia`);
-
-            if (tentativa > 1) {
-                await esperar(2000);
-
-                if (typeof message.reload === "function") {
-                    try {
-                        await message.reload();
-                        console.log("🔄 Mensagem recarregada");
-                    } catch (erroReload) {
-                        console.log(
-                            "Falha ao recarregar:",
-                            erroReload?.message || erroReload
-                        );
-                    }
-                }
-            }
-
-            const media = await baixarMidiaComTentativas(message);
-
-            if (media?.data && media?.mimetype) {
-                return media;
-            }
-
-            ultimoErro = new Error(
-                "A mídia foi retornada sem conteúdo"
-            );
-
-        } catch (erro) {
-            ultimoErro = erro;
-
-            console.log(
-                `❌ Tentativa ${tentativa} falhou:`,
-                erro?.message || erro
-            );
-        }
-    }
-
-    throw ultimoErro || new Error("Falha ao baixar mídia");
-}
-
 client.on("message_revoke_everyone", async (after, before) => {
 
     if (!before) return;
@@ -481,6 +431,35 @@ client.on("message_create", async (message) => {
     }
 });
 
+	// Função pra ajeitar o downloadMedia() até sair atualização do whatsapp-web.js
+	function corrigirIdMensagem(message) {
+		if (!message?.id) {
+			return false;
+		}
+
+		if (message.id._serialized) {
+			return true;
+		}
+
+		if (message.id.$1) {
+			message.id._serialized = message.id.$1;
+			return true;
+		}
+
+		if (
+			message.id.fromMe !== undefined &&
+			message.id.remote &&
+			message.id.id
+		) {
+			message.id._serialized =
+				`${message.id.fromMe}_${message.id.remote}_${message.id.id}`;
+
+			return true;
+		}
+
+		return false;
+	}
+
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
@@ -517,12 +496,29 @@ if (message.hasMedia) {
         console.log("Mimetype inicial:", message._data?.mimetype);
         console.log("ID da mensagem:", message.id?._serialized);
 
-        let media;
+		let media;
 
-        try {
-            console.log("1️⃣ Tentando baixar a mídia...");
-            media = await message.downloadMedia();
-            console.log("✅ Mídia baixada com sucesso");
+		try {
+			console.log("ID completo recebido:", message.id);
+
+			const idCorrigido = corrigirIdMensagem(message);
+
+			console.log(
+				"ID serializado após correção:",
+				message.id?._serialized
+			);
+
+			if (!idCorrigido) {
+				console.error(
+					"❌ Não foi possível obter o ID correto da mensagem."
+				);
+				console.dir(message.id, { depth: null });
+				return;
+			}
+
+			console.log("1️⃣ Tentando baixar a mídia...");
+			media = await message.downloadMedia();
+			console.log("✅ Mídia baixada com sucesso");
         } catch (erroDownload) {
             console.error("❌ ERRO NO DOWNLOAD DA MÍDIA");
             console.error("Mensagem:", erroDownload?.message);
