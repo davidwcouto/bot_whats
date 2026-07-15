@@ -99,6 +99,11 @@ client.on('ready', async () => {
   });
 });
 
+console.log(
+    "VERSÃO WHATSAPP-WEB.JS:",
+    require("whatsapp-web.js/package.json").version
+);
+
 // Carrega a planilha
 let data = [];
 try {
