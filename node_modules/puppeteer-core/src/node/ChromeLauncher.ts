@@ -178,6 +178,7 @@ export class ChromeLauncher extends BrowserLauncher {
       'MediaRouter',
       'OptimizationHints',
       'RenderDocument', // https://crbug.com/444150315
+      'PartitionAllocSchedulerLoopQuarantineTaskControlledPurge', // https://crbug.com/489314676
       ...(turnOnExperimentalFeaturesForTesting
         ? []
         : [
@@ -245,7 +246,10 @@ export class ChromeLauncher extends BrowserLauncher {
       enableExtensions = false,
     } = options;
     if (userDataDir) {
-      chromeArguments.push(`--user-data-dir=${path.resolve(userDataDir)}`);
+      // If absolute (for any platform) path is given, we should not resolve it.
+      chromeArguments.push(
+        `--user-data-dir=${path.posix.isAbsolute(userDataDir) || path.win32.isAbsolute(userDataDir) ? userDataDir : path.resolve(userDataDir)}`,
+      );
     }
     if (devtools) {
       chromeArguments.push('--auto-open-devtools-for-tabs');

@@ -4,9 +4,9 @@
  * NOTE:
  * Rewrite it to 'upsertFunction' after updating Puppeteer to 20.6 or higher
  * using page.removeExposedFunction
- * https://pptr.dev/api/puppeteer.page.removeExposedFunction
+ * https://pptr.dev/api/puppeteer.page.removeexposedfunction
  *
- * @param {import(puppeteer).Page} page
+ * @param {object} page - Puppeteer Page instance
  * @param {string} name
  * @param {Function} fn
  */
@@ -20,4 +20,4 @@ async function exposeFunctionIfAbsent(page, name, fn) {
     await page.exposeFunction(name, fn);
 }
 
-module.exports = {exposeFunctionIfAbsent};
+module.exports = { exposeFunctionIfAbsent };

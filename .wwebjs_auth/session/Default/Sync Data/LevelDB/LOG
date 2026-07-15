@@ -1,2 +1,3 @@
-2026/07/06-16:30:23.736 4fe8 Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Sync Data\LevelDB since it was missing.
-2026/07/06-16:30:23.747 4fe8 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/07/15-00:11:46.624 47c8 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/07/15-00:11:46.627 47c8 Recovering log #3
+2026/07/15-00:11:46.628 47c8 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Sync Data\LevelDB/000003.log 

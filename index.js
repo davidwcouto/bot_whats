@@ -52,7 +52,7 @@ cloudinary.config({
 let allowedContacts = [];
 try {
   const contactsData = fs.readFileSync("allowed.txt", "utf8");
-  // Divide o conteúdo em linhas, remove espaços e filtra linhas vaziass
+  // Divide o conteúdo em linhas, remove espaços e filtra linhas vazias
   allowedContacts = contactsData
     .split("\n")
     .map(line => line.trim())
@@ -67,7 +67,7 @@ const client = new Client({
 	authStrategy: new LocalAuth(),
 		puppeteer:{
 		headless:true,
-		executablePath: "/usr/bin/google-chrome-stable",
+		    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
 			args:[
 				'--no-sandbox',
 				'--disable-setuid-sandbox'
@@ -445,7 +445,6 @@ client.on("message", async (message) => {
 	const chatId = message.from;
 	const contact = await message.getContact();
 	const msg = message.body.toLowerCase().trim();
-	const chat = await message.getChat();
 	let phone = contact.number;
   
 	if (message.hasMedia) {
@@ -563,18 +562,15 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
     // 🔓 libera nova consulta
 	clientesAtendidos.delete(chatId);
 
-    await chat.markUnread();
     return;
 	}
 
     if (msg === "atendimento" || msg === "pedido") {
         if (estaDentroDoHorario()) {
         atendimentoHumano.add(chatId);
-		await chat.sendSeen();
         await client.sendMessage(chatId, "📞 Você será atendido em breve. Aguarde...");
 		removerAtendimentoHumano(chatId);
         removerClientesAtendidos(chatId);
-		await chat.markUnread();
 
       } else {
 			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
@@ -597,7 +593,6 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
 		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
 		clientesAtendidos.add(chatId);
-		await chat.markUnread();
 		return;
 	}
 	
@@ -613,7 +608,6 @@ if (!clientesAtendidos.has(chatId)) {
         !respostaPossivel.startsWith("⚠ Nenhum produto")) {
         clientesAtendidos.add(chatId);
         await client.sendMessage(chatId, respostaPossivel);
-        await chat.markUnread();
         return;
     }
 
@@ -624,7 +618,7 @@ if (!clientesAtendidos.has(chatId)) {
             "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
         );
         clientesAtendidos.add(chatId);
-		await chat.markUnread();
+	
     } catch (error) {
         if (error.message.includes("Could not get the quoted message")) {
             console.warn("Aviso: Não foi possível obter a mensagem citada. Enviando mensagem mesmo assim.");
@@ -643,7 +637,6 @@ if (!clientesAtendidos.has(chatId)) {
         await client.sendMessage(chatId, "📞 Você será atendido em breve. Aguarde...");
 		removerAtendimentoHumano(chatId);
         removerClientesAtendidos(chatId);
-			await chat.markUnread();
 		
       } else {
             await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
@@ -666,7 +659,6 @@ if (respostaPreco.startsWith("❌ Produto não encontrado")) {
        await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n📞 Vou te encaminhar para um atendente.");
 	   removerAtendimentoHumano(chatId);
        removerClientesAtendidos(chatId);
-		await chat.markUnread();
      } else {
          await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n⏳ Assim que nossa equipe estiver em horário de atendimento iremos lhe ajudar.");
 	 }
@@ -674,7 +666,6 @@ if (respostaPreco.startsWith("❌ Produto não encontrado")) {
 }
 
 await client.sendMessage(chatId, respostaPreco);
-await chat.markUnread();
 
     } catch (error) {
 
