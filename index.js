@@ -489,24 +489,10 @@ client.on("message", async (message) => {
 	// Bloco que salva o comprovante
 if (message.hasMedia) {
     try {
-        console.log("📎 Mídia recebida");
-        console.log("Cliente:", phone);
-        console.log("Chat ID:", chatId);
-        console.log("Tipo da mensagem:", message.type);
-        console.log("Mimetype inicial:", message._data?.mimetype);
-        console.log("ID da mensagem:", message.id?._serialized);
-
 		let media;
 
 		try {
-			console.log("ID completo recebido:", message.id);
-
 			const idCorrigido = corrigirIdMensagem(message);
-
-			console.log(
-				"ID serializado após correção:",
-				message.id?._serialized
-			);
 
 			if (!idCorrigido) {
 				console.error(
