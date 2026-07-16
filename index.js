@@ -263,7 +263,7 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
 		
 		console.log("✅ Enviado para:", numero);
 		
-		const delay = Math.floor(Math.random() * 4000) + 6000;
+		const delay = Math.floor(Math.random() * 3000) + 4000;
 		await new Promise(r => setTimeout(r, delay));
 		}
 
@@ -487,147 +487,147 @@ client.on("message", async (message) => {
 	}
 	
 	// Bloco que salva o comprovante
-if (message.hasMedia) {
-    try {
-		let media;
-
+	if (message.hasMedia) {
 		try {
-			const idCorrigido = corrigirIdMensagem(message);
+			let media;
 
-			if (!idCorrigido) {
-				console.error(
-					"❌ Não foi possível obter o ID correto da mensagem."
-				);
-				console.dir(message.id, { depth: null });
+			try {
+				const idCorrigido = corrigirIdMensagem(message);
+
+				if (!idCorrigido) {
+					console.error(
+						"❌ Não foi possível obter o ID correto da mensagem."
+					);
+					console.dir(message.id, { depth: null });
+					return;
+				}
+
+				media = await message.downloadMedia();
+			} catch (erroDownload) {
+				console.error("❌ ERRO NO DOWNLOAD DA MÍDIA");
+				console.error("Mensagem:", erroDownload?.message);
+				console.error("Nome:", erroDownload?.name);
+				console.error("Stack:", erroDownload?.stack);
+				console.dir(erroDownload, { depth: null });
 				return;
 			}
 
-			media = await message.downloadMedia();
-        } catch (erroDownload) {
-            console.error("❌ ERRO NO DOWNLOAD DA MÍDIA");
-            console.error("Mensagem:", erroDownload?.message);
-            console.error("Nome:", erroDownload?.name);
-            console.error("Stack:", erroDownload?.stack);
-            console.dir(erroDownload, { depth: null });
-            return;
-        }
+			if (!media) {
+				console.log("❌ downloadMedia retornou null ou undefined");
+				return;
+			}
 
-        if (!media) {
-            console.log("❌ downloadMedia retornou null ou undefined");
-            return;
-        }
+			if (!media.data || !media.mimetype) {
+				console.log("❌ Mídia sem conteúdo ou sem mimetype");
+				return;
+			}
 
-        if (!media.data || !media.mimetype) {
-            console.log("❌ Mídia sem conteúdo ou sem mimetype");
-            return;
-        }
+			const mimetype = String(media.mimetype)
+				.split(";")[0]
+				.toLowerCase()
+				.trim();
 
-        const mimetype = String(media.mimetype)
-            .split(";")[0]
-            .toLowerCase()
-            .trim();
+			const tiposPermitidos = [
+				"application/pdf",
+				"image/jpeg",
+				"image/jpg",
+				"image/png"
+			];
 
-        const tiposPermitidos = [
-            "application/pdf",
-            "image/jpeg",
-            "image/jpg",
-            "image/png"
-        ];
+			if (!tiposPermitidos.includes(mimetype)) {
+				console.log("Arquivo ignorado:", mimetype);
+				return;
+			}
 
-        if (!tiposPermitidos.includes(mimetype)) {
-            console.log("Arquivo ignorado:", mimetype);
-            return;
-        }
+			const tamanhoBytes = Buffer.byteLength(media.data, "base64");
 
-        const tamanhoBytes = Buffer.byteLength(media.data, "base64");
+			let ehComprovante = true;
 
-        let ehComprovante = true;
+			if (mimetype.startsWith("image/")) {
+				try {
 
-        if (mimetype.startsWith("image/")) {
-            try {
+					const resultado = await Tesseract.recognize(
+						`data:${mimetype};base64,${media.data}`,
+						"por"
+					);
 
-                const resultado = await Tesseract.recognize(
-                    `data:${mimetype};base64,${media.data}`,
-                    "por"
-                );
+					const texto = String(resultado?.data?.text || "")
+						.toLowerCase();
 
-                const texto = String(resultado?.data?.text || "")
-                    .toLowerCase();
+					const palavrasChave = [
+						"pix",
+						"comprovante",
+						"pagamento",
+						"valor",
+						"r$",
+						"transferencia",
+						"transferência",
+						"enviado",
+						"recebido"
+					];
 
-                const palavrasChave = [
-                    "pix",
-                    "comprovante",
-                    "pagamento",
-                    "valor",
-                    "r$",
-                    "transferencia",
-                    "transferência",
-                    "enviado",
-                    "recebido"
-                ];
+					ehComprovante = palavrasChave.some(palavra =>
+						texto.includes(palavra)
+					);
 
-                ehComprovante = palavrasChave.some(palavra =>
-                    texto.includes(palavra)
-                );
+					if (!ehComprovante) {
+						console.log("Imagem ignorada: não parece ser comprovante");
+						return;
+					}
 
-                if (!ehComprovante) {
-                    console.log("Imagem ignorada: não parece ser comprovante");
-                    return;
-                }
+				} catch (erroOCR) {
+					console.error("❌ ERRO NO OCR");
+					console.error("Mensagem:", erroOCR?.message);
+					console.error("Stack:", erroOCR?.stack);
+					console.dir(erroOCR, { depth: null });
+					return;
+				}
+			}
 
-            } catch (erroOCR) {
-                console.error("❌ ERRO NO OCR");
-                console.error("Mensagem:", erroOCR?.message);
-                console.error("Stack:", erroOCR?.stack);
-                console.dir(erroOCR, { depth: null });
-                return;
-            }
-        }
+			const agoraBrasil = DateTime.now()
+				.setZone("America/Sao_Paulo");
 
-        const agoraBrasil = DateTime.now()
-            .setZone("America/Sao_Paulo");
+			const agora = agoraBrasil.toFormat("dd-MM-yyyy_HH-mm-ss-SSS");
+			const dataHoje = agoraBrasil.toFormat("yyyy-MM-dd");
+			const nomeArquivo = `comp_${agora}_${phone}`;
 
-        const agora = agoraBrasil.toFormat("dd-MM-yyyy_HH-mm-ss-SSS");
-        const dataHoje = agoraBrasil.toFormat("yyyy-MM-dd");
-        const nomeArquivo = `comp_${agora}_${phone}`;
+			try {
+				console.log("4️⃣ Enviando para o Cloudinary...");
 
-        try {
-            console.log("4️⃣ Enviando para o Cloudinary...");
+				const resultadoCloudinary = await cloudinary.uploader.upload(
+					`data:${mimetype};base64,${media.data}`,
+					{
+						folder: `comprovantes_sapucaia/${dataHoje}`,
+						public_id: nomeArquivo,
+						resource_type: "auto",
+						overwrite: false
+					}
+				);
 
-            const resultadoCloudinary = await cloudinary.uploader.upload(
-                `data:${mimetype};base64,${media.data}`,
-                {
-                    folder: `comprovantes_sapucaia/${dataHoje}`,
-                    public_id: nomeArquivo,
-                    resource_type: "auto",
-                    overwrite: false
-                }
-            );
+				console.log(
+					"✅ Comprovante enviado:",
+					resultadoCloudinary.secure_url
+				);
 
-            console.log(
-                "✅ Comprovante enviado:",
-                resultadoCloudinary.secure_url
-            );
+			} catch (erroCloudinary) {
+				console.error("❌ ERRO NO CLOUDINARY");
+				console.error("Mensagem:", erroCloudinary?.message);
+				console.error("Código HTTP:", erroCloudinary?.http_code);
+				console.error("Stack:", erroCloudinary?.stack);
+				console.dir(erroCloudinary, { depth: null });
+				return;
+			}
 
-        } catch (erroCloudinary) {
-            console.error("❌ ERRO NO CLOUDINARY");
-            console.error("Mensagem:", erroCloudinary?.message);
-            console.error("Código HTTP:", erroCloudinary?.http_code);
-            console.error("Stack:", erroCloudinary?.stack);
-            console.dir(erroCloudinary, { depth: null });
-            return;
-        }
+		} catch (erro) {
+			console.error("❌ ERRO GERAL NO COMPROVANTE");
+			console.error("Mensagem:", erro?.message);
+			console.error("Nome:", erro?.name);
+			console.error("Stack:", erro?.stack);
+			console.dir(erro, { depth: null });
+		}
 
-    } catch (erro) {
-        console.error("❌ ERRO GERAL NO COMPROVANTE");
-        console.error("Mensagem:", erro?.message);
-        console.error("Nome:", erro?.name);
-        console.error("Stack:", erro?.stack);
-        console.dir(erro, { depth: null });
-    }
-
-    return;
-}
+		return;
+	}
   
       // Se o chat estiver silenciado, ignorar a mensagem
 	if (silencedChats.has(chatId) && !message.hasMedia) {
@@ -735,7 +735,6 @@ if (!clientesAtendidos.has(chatId)) {
             "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
         );
         clientesAtendidos.add(chatId);
-	
     } catch (error) {
         if (error.message.includes("Could not get the quoted message")) {
             console.warn("Aviso: Não foi possível obter a mensagem citada. Enviando mensagem mesmo assim.");
@@ -938,9 +937,3 @@ app.get("/health", (req, res) => {
 app.listen(port, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${port}`);
 });
-
-// Reinicia o bot automaticamente a cada 24 horas
-// setTimeout(() => {
-//   console.log("♻️ Reiniciando o bot para limpar memória...");
-//   process.exit(0);
-// }, 24 * 60 * 60 * 1000);
