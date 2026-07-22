@@ -701,8 +701,10 @@ function normalizarTelefoneBrasil(telefone) {
 
 function montarMensagemPedido(dados) {
   let mensagem =
-    `Olá, ${dados.cliente || 'cliente'}!\n\n` +
-    `Seu pedido nº ${dados.pedido} foi registrado na Coutech Cell.\n\n`;
+	`Pedido nº ${dados.pedido}\n` +
+    `Cliente: ${dados.cliente || 'cliente'}!\n\n` +
+    `Endereço: ${dados.endereco}\n\n` +
+	`Cidade: ${dados.cidade}\n\n`;
 
   if (dados.produtos?.length) {
     mensagem += `*Produtos:*\n`;
@@ -1281,6 +1283,9 @@ app.post('/enviar-pedido', async (req, res) => {
       pedido,
       telefone,
       cliente,
+	  atendente,
+	  endereco,
+	  cidade,
       produtos,
       valorProdutos,
       desconto,
@@ -1321,16 +1326,19 @@ app.post('/enviar-pedido', async (req, res) => {
       });
     }
 
-    const mensagem = montarMensagemPedido({
-      pedido,
-      cliente,
-      produtos,
-      valorProdutos,
-      desconto,
-      total,
-      formaPagamento,
-      coleta
-    });
+	const mensagem = montarMensagemPedido({
+	  pedido,
+	  cliente,
+	  atendente,
+	  endereco,
+	  cidade,
+	  produtos,
+	  valorProdutos,
+	  desconto,
+	  total,
+	  formaPagamento,
+	  coleta
+	});
 
     await client.sendMessage(
       numeroWhatsApp._serialized,
