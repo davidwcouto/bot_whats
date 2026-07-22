@@ -704,7 +704,7 @@ function montarMensagemPedido(dados) {
 	`Pedido nº ${dados.pedido}\n` +
     `Cliente: ${dados.cliente || 'cliente'}\n` +
     `Endereço: ${dados.endereco}\n` +
-	`Cidade: ${dados.cidade}\n\n`;
+	`Cidade: ${dados.cidade}\n`;
 
   if (dados.produtos?.length) {
     mensagem += `*Produtos:*\n`;
