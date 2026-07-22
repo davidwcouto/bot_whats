@@ -197,8 +197,6 @@ function prepararPesquisa(texto) {
     pesquisa = pesquisa.replace(/\bcombo\b/g, "tela");
 
     // Placa de carga
-    pesquisa = pesquisa.replace(/\bconector\b/g, "placa de carga");
-    pesquisa = pesquisa.replace(/\bconector de carga\b/g, "placa de carga");
     pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
     pesquisa = pesquisa.replace(/\bcarga\b/g, "placa de carga");
 
@@ -746,6 +744,16 @@ function montarMensagemPedido(dados) {
   return mensagem;
 }
 
+function autenticarPainel(req, res, next) {
+    const token = req.query.token || req.headers["x-coutech-token"];
+
+    if (!process.env.SEGREDO_PAINEL || token !== process.env.SEGREDO_PAINEL) {
+        return res.status(401).send("Não autorizado");
+    }
+
+    next();
+}
+
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
@@ -1130,25 +1138,23 @@ async function iniciarClienteWhatsApp() {
 iniciarClienteWhatsApp();
 
 setInterval(async () => {
-
     try {
-
         const state = await client.getState();
 
-        if (state !== "CONNECTED") {
-
-            console.log("❌ Estado inválido:", state);
-            process.exit(1);
-
+        if (!state) {
+            console.log("⚠ WhatsApp ainda está inicializando.");
+            return;
         }
 
-    } catch (err) {
-
-        console.log("Erro ao verificar estado:", err);
-        process.exit(1);
-
+        if (state !== "CONNECTED") {
+            console.log(`⚠ Estado atual do WhatsApp: ${state}`);
+        }
+    } catch (erro) {
+        console.error(
+            "Erro ao verificar o estado:",
+            erro.message || erro
+        );
     }
-
 }, 60000);
 
 app.use(express.urlencoded({ extended: true }));
@@ -1156,7 +1162,7 @@ app.use(express.json());
 app.get("/", (req,res)=>{
 res.redirect("/painel")
 });
-app.get("/painel", (req, res) => {
+app.get("/painel", autenticarPainel, (req, res) => {
 res.send(`
 <html>
 <head>
@@ -1184,7 +1190,7 @@ button{padding:12px 20px;background:#27ae60;color:white;border:none;font-size:16
 `);
 });
 
-app.post("/disparo", upload.single("imagem"), async (req, res) => {
+app.post("/disparo", autenticarPainel, upload.single("imagem"), async (req, res) => {
     const mensagem = req.body.mensagem;
 
     let caminhoImagem = null;
@@ -1198,7 +1204,7 @@ app.post("/disparo", upload.single("imagem"), async (req, res) => {
     res.send("🚀 Disparo iniciado!");
 });
 
-app.get("/excluidas", async (req, res) => {
+app.get("/excluidas", autenticarPainel, async (req, res) => {
     try {
         const [rows] = await db.execute(`
             SELECT * FROM mensagens_excluidas
