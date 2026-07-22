@@ -77,7 +77,7 @@ try {
   console.error("Erro ao carregar contatos do arquivo allowed.txt:", err.message);
 }
 
-// Criando o cliente do WhatsApp Web
+// Criando o cliente do WhatsApp Webb
 const client = new Client({
 	authStrategy: new LocalAuth(),
 		puppeteer:{
