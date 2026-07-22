@@ -1,23 +1,8 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-process.on("unhandledRejection", err => {
-    const mensagem = String(err?.message || err);
-
-    if (
-        mensagem.includes("Execution context was destroyed") ||
-        mensagem.includes("Runtime.callFunctionOn")
-    ) {
-        console.warn(
-            "⚠ O contexto do WhatsApp Web foi recarregado durante uma operação."
-        );
-        return;
-    }
-
-    console.error(
-        "UNHANDLED REJECTION:",
-        err?.stack || err
-    );
+process.on('unhandledRejection', err => {
+    console.error('UNHANDLED REJECTION:', err);
 });
 
 process.on('uncaughtException', err => {
@@ -35,15 +20,15 @@ const db = mysql.createPool({
 });
 
 const fs = require("fs");
-const axios = require("axios");
 const cloudinary = require("cloudinary").v2;
 const path = require("path");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const express = require('express');
 const qrcode = require("qrcode-terminal");
+const xlsx = require("xlsx");
 const puppeteer = require('puppeteer');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
 const inicioBot = Math.floor(Date.now() / 1000);	
 const { DateTime } = require("luxon");
 const Tesseract = require("tesseract.js");
@@ -114,6 +99,17 @@ client.on('ready', async () => {
   });
 });
 
+// Carrega a planilha
+let data = [];
+try {
+    const workbook = xlsx.readFile("precos.xlsx");
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    data = xlsx.utils.sheet_to_json(sheet);
+    console.log("📂 Planilha carregada com sucesso!");
+} catch (error) {
+    console.error("⚠ Erro ao carregar a planilha:", error.message);
+}
+
 // Funções para remover clientes da lista
 const removerAtendimentoHumano = (chatId) => {
     setTimeout(async () => {
@@ -138,267 +134,61 @@ const removerSilencedChats = (chatId) => {
 };
 
 // Função para buscar preços
-function normalizarTexto(texto) {
-    return String(texto || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/\s+/g, " ")
+const buscarPreco = (produto, chatId) => {
+    if (!produto) return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
+
+    // Se a mensagem for apenas "tela", "incell", "original" ou "nacional", retorna erro
+    const termosInvalidos = ["preta", "tela", "incell", "incel", "original", "orig", "nacional", "nac", "com aro"];
+    const preposicoes = ["do", "da", "de", "tela", "samsung", "motorola", "display", "combo", "frontal", "xiaomi"];
+    const normalizar = (str) =>
+        str
+            .toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+            .replace(/\s+/g, ' ') // múltiplos espaços => 1 espaço
+            .trim();
+
+    const removerEspacos = (str) => str.replace(/\s+/g, '');
+
+const removerPreposicoes = (str) => {
+    return str
+        .split(' ')
+        .filter(palavra => !preposicoes.includes(palavra))
+        .join(' ')
         .trim();
-}
+};
 
-function formatarPreco(valor) {
-    if (valor === null || valor === undefined || valor === "") {
-        return "0,00";
+    const nomeNormalizado = removerPreposicoes(normalizar(produto));
+    const nomeSemEspacos = removerEspacos(nomeNormalizado);
+
+    if (termosInvalidos.includes(nomeNormalizado)) {
+        return "❌ Digite o nome completo do produto.";
     }
 
-    let numero;
+    const item = data.find(row => {
+        if (!row.Produto) return false;
 
-    if (typeof valor === "number") {
-        numero = valor;
-    } else {
-        const texto = String(valor).trim();
+        const nomeProduto = normalizar(row.Produto);
+        const nomeProdutoSemEspacos = removerEspacos(nomeProduto);
 
-        // Formato brasileiro: 1.250,90
-        if (texto.includes(",") && texto.includes(".")) {
-            numero = Number(
-                texto
-                    .replace(/\./g, "")
-                    .replace(",", ".")
-            );
-
-        // Formato brasileiro simples: 70,00
-        } else if (texto.includes(",")) {
-            numero = Number(texto.replace(",", "."));
-
-        // Formato da API: 70.00
-        } else {
-            numero = Number(texto);
-        }
-    }
-
-    if (!Number.isFinite(numero)) {
-        console.error("Preço inválido recebido do GestãoClick:", valor);
-        return "0,00";
-    }
-
-    return numero.toLocaleString("pt-BR", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        return (
+            nomeProduto === nomeNormalizado ||
+            nomeProdutoSemEspacos === nomeSemEspacos ||
+            nomeProduto.includes(nomeNormalizado) ||
+            nomeProdutoSemEspacos.includes(nomeSemEspacos)
+        );
     });
-}
 
-function prepararPesquisa(texto) {
-    let pesquisa = normalizarTexto(texto);
+    if (!item) {
+        return "❌ Produto não encontrado.\n\nPara atendimento digite 2️⃣";
+	}
+	ultimoProdutoConsultado.set(chatId, item);
+	
+	setTimeout(() => {
+    ultimoProdutoConsultado.delete(chatId);
+	}, 30 * 60 * 1000);
 
-    // Tela
-    pesquisa = pesquisa.replace(/\bdisplay\b/g, "tela");
-    pesquisa = pesquisa.replace(/\bfrontal\b/g, "tela");
-    pesquisa = pesquisa.replace(/\bcombo\b/g, "tela");
-
-    // Placa de carga
-    pesquisa = pesquisa.replace(/\bconector\b/g, "placa de carga");
-    pesquisa = pesquisa.replace(/\bconector de carga\b/g, "placa de carga");
-    pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
-    pesquisa = pesquisa.replace(/\bcarga\b/g, "placa de carga");
-
-    // Se não informou o tipo da peça, assume tela
-    const tipos = [
-        "tela",
-        "bateria",
-        "placa de carga",
-        "flex",
-		"conector"
-    ];
-
-    const possuiTipo = tipos.some(tipo => pesquisa.includes(tipo));
-
-    if (!possuiTipo) {
-        pesquisa = "tela " + pesquisa;
-    }
-
-    return pesquisa.trim();
-}
-
-function pesquisaValida(pesquisa) {
-    const tiposPermitidos = [
-        "tela",
-        "bateria",
-        "placa de carga",
-        "flex",
-		"conector"
-    ];
-
-    return tiposPermitidos.some(tipo =>
-        pesquisa.includes(tipo)
-    );
-
-}
-
-async function buscarPreco(produto, chatId) {
-    if (!produto) {
-        return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
-    }
-
-    const pesquisa = prepararPesquisa(produto);
-
-    if (!pesquisaValida(pesquisa)) {
-        return `⚠️ Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
-
-Exemplos:
-• tela A12
-• bateria A12
-• placa de carga A12
-• flex A12
-
-Digite novamente sua consulta.`;
-    }
-
-    if (
-        !process.env.GESTAOCLICK_ACCESS_TOKEN ||
-        !process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN
-    ) {
-        console.error("Tokens do GestãoClick não configurados no .env.");
-
-        return `⚠ Não consegui consultar o sistema agora.
-
-Digite 2️⃣ para atendimento.`;
-    }
-
-    try {
-        console.log(`🔎 Consultando GestãoClick: ${pesquisa}`);
-
-        const resposta = await axios.get(
-            "https://api.gestaoclick.com/produtos",
-            {
-                headers: {
-                    "access-token":
-                        process.env.GESTAOCLICK_ACCESS_TOKEN,
-
-                    "secret-access-token":
-                        process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN,
-
-                    "Accept": "application/json"
-                },
-
-                params: {
-                    nome: pesquisa,
-                    ativo: 1
-                },
-
-                timeout: 15000
-            }
-        );
-
-        const produtos = Array.isArray(resposta.data?.data)
-            ? resposta.data.data
-            : [];
-
-        const palavrasPesquisa = pesquisa
-            .split(" ")
-            .filter(Boolean);
-
-        const encontrados = produtos.filter(item => {
-            const nomeProduto = normalizarTexto(item.nome);
-
-            if (!nomeProduto) {
-                return false;
-            }
-
-            /*
-             * Exige que todas as palavras pesquisadas apareçam.
-             * Assim "tela A12" encontra:
-             * "Tela Samsung A12 com aro"
-             */
-            return palavrasPesquisa.every(palavra =>
-                nomeProduto.includes(palavra)
-            );
-        });
-
-        if (encontrados.length === 0) {
-            return `❌ Produto não encontrado.
-
-Exemplos:
-• tela A12
-• bateria A12
-• placa de carga A12
-• flex A12
-
-Para atendimento digite 2️⃣`;
-        }
-
-        const encontradosLimitados = encontrados.slice(0, 15);
-
-        /*
-         * Guarda o primeiro resultado para manter compatibilidade
-         * com a opção 3 do seu bot.
-         */
-        ultimoProdutoConsultado.set(chatId, {
-            Produto: encontradosLimitados[0].nome,
-            Preco: encontradosLimitados[0].valor_venda,
-            Estoque: encontradosLimitados[0].estoque,
-            Imagem: null
-        });
-
-        setTimeout(() => {
-            ultimoProdutoConsultado.delete(chatId);
-        }, 30 * 60 * 1000);
-
-        let mensagem =
-            `🔎 Encontrei estas opções para ` +
-            `*${produto.toUpperCase()}*:\n\n`;
-
-        encontradosLimitados.forEach((item, index) => {
-            mensagem += `${index + 1}️⃣ *${item.nome}*\n`;
-            mensagem +=
-                `💰 R$ ${formatarPreco(item.valor_venda)}\n`;
-
-            if (
-                item.estoque !== undefined &&
-                item.estoque !== null &&
-                item.estoque !== ""
-            ) {
-                mensagem += `📦 Estoque: ${item.estoque}\n`;
-            }
-
-            mensagem += "\n";
-        });
-
-        mensagem += "Para fazer pedido digite 2️⃣";
-
-        console.log(
-            `✅ GestãoClick retornou ${encontrados.length} produto(s)`
-        );
-
-        return mensagem;
-
-    } catch (erro) {
-        console.error("❌ Erro ao consultar GestãoClick:", {
-            mensagem: erro.message,
-            status: erro.response?.status,
-            resposta: erro.response?.data
-        });
-
-        if (erro.code === "ECONNABORTED") {
-            return `⚠ O GestãoClick demorou para responder.
-
-Tente novamente ou digite 2️⃣ para atendimento.`;
-        }
-
-        if (
-            erro.response?.status === 401 ||
-            erro.response?.status === 403
-        ) {
-            return `⚠ Não foi possível autenticar no GestãoClick.
-
-Digite 2️⃣ para atendimento.`;
-        }
-
-        return `⚠ Não consegui consultar o GestãoClick agora.
-
-Digite 2️⃣ para atendimento.`;
-    }
-}
+    return `💰 O preço de *${item.Produto}* é *R$ ${item.Preco}* \n\nPara fazer pedido digite 2️⃣\nVisualizar foto do produto digite 3️⃣`;
+};
 
 const horarioAtendimento = {
     inicio: 9,        // 09:00
@@ -625,24 +415,9 @@ client.on("message_create", async (message) => {
 
     // palavras-chave que IDENTIFICAM resposta automática
         const mensagensDoBot = [
-		"📞",
-		"💰",
-		"⏳",
-		"❌",
-		"⚠",
-		"⚠️",
-		"🔎",
-		"Olá!",
-		"Digite o nome do produto",
-		"Como posso te ajudar?",
-		"Para fazer pedido digite 2️⃣",
-		"Digite a opção",
-		"Nenhum produto",
-		"Para consultar",
-		"tipo da peça",
-		"modelo do aparelho",
-		"Digite novamente sua consulta"
-		];
+            "📞", "💰", "⏳", "❌", "Olá!", "Digite o nome do produto",
+            "Como posso te ajudar?", "Para fazer pedido digite 2️⃣", "Digite a opção", "⚠ Nenhum produto"
+        ];
 
     const ehMensagemDoBot = mensagensDoBot.some(palavra =>
         body.includes(palavra)
@@ -684,65 +459,7 @@ client.on("message_create", async (message) => {
 
 		return false;
 	}
-	
-function normalizarTelefoneBrasil(telefone) {
-  let numero = String(telefone || '').replace(/\D/g, '');
 
-  if (!numero) {
-    throw new Error('Telefone não informado');
-  }
-
-  if (numero.startsWith('55')) {
-    return numero;
-  }
-
-  return `55${numero}`;
-}
-
-function montarMensagemPedido(dados) {
-  let mensagem =
-    `Olá, ${dados.cliente || 'cliente'}!\n\n` +
-    `Seu pedido nº ${dados.pedido} foi registrado na Coutech Cell.\n\n`;
-
-  if (dados.produtos?.length) {
-    mensagem += `*Produtos:*\n`;
-
-    for (const produto of dados.produtos) {
-      mensagem +=
-        `• ${produto.nome}\n` +
-        `  Qtd: ${produto.quantidade} | Valor: R$ ${produto.valorTotal}\n`;
-    }
-
-    mensagem += '\n';
-  }
-
-  if (dados.valorProdutos) {
-    mensagem += `Valor dos produtos: R$ ${dados.valorProdutos}\n`;
-  }
-
-  if (dados.desconto && dados.desconto !== '0,00') {
-    mensagem += `Desconto: R$ ${dados.desconto}\n`;
-  }
-
-  mensagem += `*Total: R$ ${dados.total || '0,00'}*\n`;
-
-  if (dados.formaPagamento) {
-    mensagem += `Forma de pagamento: ${dados.formaPagamento}\n`;
-  }
-
-  if (
-    dados.coleta &&
-    dados.coleta.toLowerCase() !== 'sem' &&
-    dados.coleta.toLowerCase() !== 'sem coleta'
-  ) {
-    mensagem += `Coletar: ${dados.coleta}\n`;
-  }
-
-  mensagem +=
-    `\nA Coutech Cell agradece a preferência!`;
-
-  return mensagem;
-}
 
 // Evento de mensagem recebida
 client.on("message", async (message) => {
@@ -981,15 +698,7 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 
     if (msg === "consultar valor") {
         atendimentoHumano.delete(chatId);
-        await client.sendMessage(chatId, `🔎 Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
-
-Exemplos:
-• tela A12
-• bateria A12
-• placa de carga A12
-• flex A12
-
-Digite novamente sua consulta.`);
+        await client.sendMessage(chatId, "Digite o nome do produto para consultar o valor.\nExemplos:\n A12 com aro\n G20 sem aro\n k41s com aro\n iPhone 8 plus\n iPhone 12 incell\n iPhone 12 original\n Redmi 12c com aro\n Redmi Note 8 sem aro");
         removerClientesAtendidos(chatId);	
 		return;
     }
@@ -1010,7 +719,7 @@ Digite novamente sua consulta.`);
 
 	} else {
 if (!clientesAtendidos.has(chatId)) {
-    const respostaPossivel = await buscarPreco(msg, chatId);
+    const respostaPossivel = buscarPreco(msg, chatId);
 
     // Se buscarPreco retornou algo que não é a mensagem de erro padrão
     if (!respostaPossivel.startsWith("❌ Produto não encontrado") &&
@@ -1053,19 +762,13 @@ if (!clientesAtendidos.has(chatId)) {
     }
 
 	else if (msg === "1") {
-    await client.sendMessage(chatId, `🔎 Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
-
-Exemplos:
-• tela A12
-• bateria A12
-• placa de carga A12
-• flex A12`);
+    await client.sendMessage(chatId, "Digite o nome do produto para consultar o valor.\nExemplos:\n A12 com aro\n G20 sem aro\n k41s com aro\n iPhone 8 plus\n iPhone 12 incell\n iPhone 12 original\n Redmi 12c com aro\n Redmi Note 8 sem aro");
 		   // Remove o cliente da lista de atendimento após 1 minutoo
 			removerClientesAtendidos(chatId);
         return;
 }		
 
-const respostaPreco = await buscarPreco(msg, chatId);
+const respostaPreco = buscarPreco(msg, chatId);
 
 if (respostaPreco.startsWith("❌ Produto não encontrado")) {
        if (estaDentroDoHorario()) {
@@ -1089,43 +792,7 @@ await client.sendMessage(chatId, respostaPreco);
 										
 });
 
-async function iniciarClienteWhatsApp() {
-    try {
-        console.log("🔄 Iniciando cliente do WhatsApp...");
-        await client.initialize();
-    } catch (erro) {
-        const mensagem = String(erro?.message || erro);
-
-        console.error(
-            "❌ Erro ao iniciar o WhatsApp:",
-            mensagem
-        );
-
-        if (
-            mensagem.includes("Execution context was destroyed") ||
-            mensagem.includes("Runtime.callFunctionOn") ||
-            mensagem.includes("Cannot find context")
-        ) {
-            console.log(
-                "♻️ A página do WhatsApp recarregou durante a inicialização."
-            );
-
-            console.log(
-                "🔄 Tentando iniciar novamente em 5 segundos..."
-            );
-
-            setTimeout(() => {
-                iniciarClienteWhatsApp();
-            }, 5000);
-
-            return;
-        }
-
-        console.error(erro?.stack || erro);
-    }
-}
-
-iniciarClienteWhatsApp();
+client.initialize();
 
 setInterval(async () => {
 
@@ -1265,104 +932,10 @@ app.get("/excluidas", async (req, res) => {
     }
 });
 
-app.post('/enviar-pedido', async (req, res) => {
-  try {
-    const tokenRecebido = req.headers['x-coutech-token'];
-    const tokenCorreto = process.env.SEGREDO_CUPONS;
-
-    if (!tokenCorreto || tokenRecebido !== tokenCorreto) {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Não autorizado'
-      });
-    }
-
-    const {
-      pedido,
-      telefone,
-      cliente,
-      produtos,
-      valorProdutos,
-      desconto,
-      total,
-      formaPagamento,
-      coleta
-    } = req.body;
-
-    if (!pedido) {
-      return res.status(400).json({
-        sucesso: false,
-        erro: 'Número do pedido não informado'
-      });
-    }
-
-    if (!telefone) {
-      return res.status(400).json({
-        sucesso: false,
-        erro: 'Telefone do cliente não informado'
-      });
-    }
-
-    if (!client.info) {
-      return res.status(503).json({
-        sucesso: false,
-        erro: 'WhatsApp ainda não está conectado'
-      });
-    }
-
-    const numero = normalizarTelefoneBrasil(telefone);
-
-    const numeroWhatsApp = await client.getNumberId(numero);
-
-    if (!numeroWhatsApp) {
-      return res.status(404).json({
-        sucesso: false,
-        erro: `O número ${telefone} não foi encontrado no WhatsApp`
-      });
-    }
-
-    const mensagem = montarMensagemPedido({
-      pedido,
-      cliente,
-      produtos,
-      valorProdutos,
-      desconto,
-      total,
-      formaPagamento,
-      coleta
-    });
-
-    await client.sendMessage(
-      numeroWhatsApp._serialized,
-      mensagem
-    );
-
-    console.log(
-      `✅ Pedido ${pedido} enviado no WhatsApp para ${numero}`
-    );
-
-    return res.json({
-      sucesso: true,
-      pedido,
-      telefone: numero
-    });
-  } catch (erro) {
-    console.error(
-      '❌ Erro na rota /enviar-pedido:',
-      erro
-    );
-
-    return res.status(500).json({
-      sucesso: false,
-      erro: erro.message
-    });
-  }
-});
-
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 API de cupons ativa na porta ${PORT}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Server is running on http://0.0.0.0:${port}`);
 });
