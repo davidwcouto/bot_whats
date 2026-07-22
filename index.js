@@ -1048,7 +1048,7 @@ if (!clientesAtendidos.has(chatId)) {
 }
 	}
 
-		// Lógica para responder às opções "1" e "2"
+		// Lógica para responderr às opções "1" e "2"
     if (msg === "2") {
         if (estaDentroDoHorario()) {
         atendimentoHumano.add(chatId);
