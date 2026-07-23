@@ -836,8 +836,6 @@ function montarMensagemSaldo(dados) {
   return (
 `💳 *ATUALIZAÇÃO DA SUA CONTA*
 
-Recebemos um pagamento em sua conta.
-
 💰 Valor recebido:
 R$ ${dados.valorPagamento}
 
