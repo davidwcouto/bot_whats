@@ -1341,10 +1341,6 @@ app.post('/enviar-pedido', async (req, res) => {
       mensagem
     );
 
-    console.log(
-      `✅ Pedido ${pedido} enviado no WhatsApp para ${numero}`
-    );
-
     return res.json({
       sucesso: true,
       pedido,
@@ -1362,6 +1358,359 @@ app.post('/enviar-pedido', async (req, res) => {
     });
   }
 });
+
+app.post('/conta-prazo/registrar-pedido', async (req, res) => {
+        let conexao;
+
+        try {
+            const tokenRecebido =
+                req.headers['x-coutech-token'];
+
+            const tokenCorreto =
+                process.env.SEGREDO_CUPONS;
+
+            if (
+                !tokenCorreto ||
+                tokenRecebido !== tokenCorreto
+            ) {
+                return res.status(401).json({
+                    sucesso: false,
+                    erro: 'Não autorizado'
+                });
+            }
+
+            const {
+                pedido,
+                cliente,
+                telefone,
+                valor,
+                formaPagamento,
+                operador
+            } = req.body || {};
+
+            const numeroPedido =
+                String(pedido || '').trim();
+
+            const telefoneNormalizado =
+                normalizarTelefoneConta(telefone);
+
+            const valorPedido =
+                converterValorConta(valor);
+
+            if (!numeroPedido) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Número do pedido não informado'
+                });
+            }
+
+            if (!telefoneNormalizado) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone não informado'
+                });
+            }
+
+            if (
+                !Number.isFinite(valorPedido) ||
+                valorPedido <= 0
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Valor do pedido inválido'
+                });
+            }
+
+            conexao = await db.getConnection();
+
+            await conexao.beginTransaction();
+
+            /*
+             * Localiza o cliente e bloqueia temporariamente
+             * essa linha durante a transação.
+             */
+            const [clientes] = await conexao.execute(
+                `
+                SELECT
+                    id,
+                    nome,
+                    telefone,
+                    ativo,
+                    limite
+                FROM clientes_conta_prazo
+                WHERE telefone = ?
+                LIMIT 1
+                FOR UPDATE
+                `,
+                [telefoneNormalizado]
+            );
+
+            if (clientes.length === 0) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Cliente não autorizado'
+                });
+            }
+
+            const clienteAutorizado = clientes[0];
+
+            if (!clienteAutorizado.ativo) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Cliente desativado',
+                    cliente: clienteAutorizado.nome
+                });
+            }
+
+            /*
+             * Verifica antecipadamente se o pedido já existe.
+             * A chave UNIQUE do banco também protege contra
+             * concorrência entre vários computadores.
+             */
+            const [pedidosExistentes] =
+                await conexao.execute(
+                    `
+                    SELECT id
+                    FROM movimentacoes_conta_prazo
+                    WHERE pedido = ?
+                      AND tipo = 'COMPRA'
+                    LIMIT 1
+                    `,
+                    [numeroPedido]
+                );
+
+            if (pedidosExistentes.length > 0) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Pedido já registrado',
+                    cliente: clienteAutorizado.nome
+                });
+            }
+
+            const [resultadoSaldo] =
+                await conexao.execute(
+                    `
+                    SELECT
+                        COALESCE(SUM(valor), 0) AS saldo
+                    FROM movimentacoes_conta_prazo
+                    WHERE cliente_id = ?
+                    `,
+                    [clienteAutorizado.id]
+                );
+
+            const saldoAnterior =
+                Number(resultadoSaldo[0].saldo || 0);
+
+            const novoSaldo =
+                saldoAnterior + valorPedido;
+
+            if (
+                clienteAutorizado.limite !== null &&
+                novoSaldo >
+                    Number(clienteAutorizado.limite)
+            ) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Limite de crédito excedido',
+                    cliente: clienteAutorizado.nome,
+                    saldoAtual:
+                        formatarValorConta(saldoAnterior),
+                    limite:
+                        formatarValorConta(
+                            clienteAutorizado.limite
+                        )
+                });
+            }
+
+            await conexao.execute(
+                `
+                INSERT INTO movimentacoes_conta_prazo (
+                    cliente_id,
+                    tipo,
+                    pedido,
+                    valor,
+                    forma,
+                    observacao,
+                    operador
+                ) VALUES (
+                    ?,
+                    'COMPRA',
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+                `,
+                [
+                    clienteAutorizado.id,
+                    numeroPedido,
+                    valorPedido,
+                    formaPagamento || 'Conta a prazo',
+                    `Pedido do GestãoClick - ${
+                        cliente || clienteAutorizado.nome
+                    }`,
+                    operador || null
+                ]
+            );
+
+            await conexao.commit();
+
+            console.log(
+                `💳 Conta a prazo: pedido ${numeroPedido} ` +
+                `registrado para ${clienteAutorizado.nome}. ` +
+                `Novo saldo: R$ ${formatarValorConta(novoSaldo)}`
+            );
+
+            return res.status(200).json({
+                sucesso: true,
+                registrado: true,
+                cliente: clienteAutorizado.nome,
+                telefone: clienteAutorizado.telefone,
+                pedido: numeroPedido,
+                valor:
+                    formatarValorConta(valorPedido),
+                saldoAnterior:
+                    formatarValorConta(saldoAnterior),
+                saldoAtual:
+                    formatarValorConta(novoSaldo)
+            });
+
+        } catch (erro) {
+            if (conexao) {
+                try {
+                    await conexao.rollback();
+                } catch {}
+            }
+
+            /*
+             * A chave UNIQUE também pode detectar uma tentativa
+             * simultânea de registrar o mesmo pedido.
+             */
+            if (erro.code === 'ER_DUP_ENTRY') {
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Pedido já registrado'
+                });
+            }
+
+            console.error(
+                '❌ Erro ao registrar conta a prazo:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro:
+                    erro.message ||
+                    'Erro interno ao registrar conta a prazo'
+            });
+
+        } finally {
+            if (conexao) {
+                conexao.release();
+            }
+        }
+    }
+);
+
+app.get('/conta-prazo/saldo/:telefone', async (req, res) => {
+        try {
+            const tokenRecebido =
+                req.headers['x-coutech-token'];
+
+            const tokenCorreto =
+                process.env.SEGREDO_CUPONS;
+
+            if (
+                !tokenCorreto ||
+                tokenRecebido !== tokenCorreto
+            ) {
+                return res.status(401).json({
+                    sucesso: false,
+                    erro: 'Não autorizado'
+                });
+            }
+
+            const telefone =
+                normalizarTelefoneConta(
+                    req.params.telefone
+                );
+
+            const [resultado] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.telefone = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite
+                LIMIT 1
+                `,
+                [telefone]
+            );
+
+            if (resultado.length === 0) {
+                return res.status(404).json({
+                    sucesso: false,
+                    erro: 'Cliente não encontrado'
+                });
+            }
+
+            const cliente = resultado[0];
+
+            return res.json({
+                sucesso: true,
+                cliente: cliente.nome,
+                telefone: cliente.telefone,
+                ativo: Boolean(cliente.ativo),
+                saldo:
+                    formatarValorConta(cliente.saldo),
+                limite:
+                    cliente.limite === null
+                        ? null
+                        : formatarValorConta(
+                            cliente.limite
+                        )
+            });
+
+        } catch (erro) {
+            console.error(
+                '❌ Erro ao consultar saldo:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: erro.message
+            });
+        }
+    }
+);
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
