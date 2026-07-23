@@ -2404,11 +2404,7 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
             <select name="forma" required>
                 <option value="Pix">Pix</option>
                 <option value="Dinheiro">Dinheiro</option>
-                <option value="Cartão">Cartão</option>
-                <option value="Transferência">
-                    Transferência
-                </option>
-                <option value="Outro">Outro</option>
+                <option value="Devolução de Mercadorias">Devolução de Mercadorias</option>
             </select>
 
             <label>Observação</label>
