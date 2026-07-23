@@ -322,13 +322,13 @@ Digite 2️⃣ para atendimento.`;
         if (encontrados.length === 0) {
             return `❌ Produto não encontrado.
 
-Exemplos:
-• tela A12
-• bateria A12
-• placa de carga A12
-• flex A12
+		Exemplos:
+		• tela A12
+		• bateria A12
+		• placa de carga A12
+		• flex A12
 
-Para atendimento digite 2️⃣`;
+		Para atendimento digite 2️⃣`;
         }
 
         const encontradosLimitados = encontrados.slice(0, 15);
@@ -349,7 +349,7 @@ Para atendimento digite 2️⃣`;
         }, 30 * 60 * 1000);
 
         let mensagem =
-            `🔎 Encontrei estas opções para ` +
+            `🔎 No estoque temos essas opções para ` +
             `*${produto.toUpperCase()}*:\n\n`;
 
         encontradosLimitados.forEach((item, index) => {
@@ -361,9 +361,7 @@ Para atendimento digite 2️⃣`;
                 item.estoque !== undefined &&
                 item.estoque !== null &&
                 item.estoque !== ""
-            ) {
-                mensagem += `📦 Estoque: ${item.estoque}\n`;
-            }
+            )
 
             mensagem += "\n";
         });
