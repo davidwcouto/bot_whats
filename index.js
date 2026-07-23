@@ -832,6 +832,31 @@ function montarMensagemPedido(dados) {
   return mensagem;
 }
 
+function montarMensagemSaldo(dados) {
+  return (
+`💳 *ATUALIZAÇÃO DA SUA CONTA*
+
+Olá, ${dados.cliente || 'cliente'}!
+
+Recebemos um pagamento em sua conta.
+
+💰 Valor recebido:
+R$ ${dados.valorPagamento}
+
+📌 Forma de pagamento:
+${dados.formaPagamento}
+
+━━━━━━━━━━━━━━━━━━
+
+💳 Saldo atual:
+*R$ ${dados.saldo}*
+
+Obrigado pela preferência!
+
+*COUTECH CELL*`
+  );
+}
+
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
@@ -1464,7 +1489,7 @@ try {
       Number(clienteConta.saldo || 0);
 
     const mensagemSaldo =
-      `💳 *Saldo da sua conta a prazo*\n\n` +
+      `💳 *SALDO DA CONTA:*\n\n` +
       `Saldo atual: *R$ ${formatarValorConta(saldoAtual)}*`;
 
     await client.sendMessage(
@@ -1509,6 +1534,93 @@ return res.json({
       sucesso: false,
       erro: erro.message
     });
+  }
+});
+
+app.post('/enviar-saldo', async (req, res) => {
+  try {
+
+    const tokenRecebido =
+      req.headers['x-coutech-token'];
+
+    const tokenCorreto =
+      process.env.SEGREDO_CUPONS;
+
+    if (!tokenCorreto || tokenRecebido !== tokenCorreto) {
+      return res.status(401).json({
+        sucesso: false,
+        erro: 'Não autorizado'
+      });
+    }
+
+    const {
+      telefone,
+      cliente,
+      valorPagamento,
+      formaPagamento,
+      saldo
+    } = req.body;
+
+    if (!telefone) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Telefone não informado'
+      });
+    }
+
+    if (!client.info) {
+      return res.status(503).json({
+        sucesso: false,
+        erro: 'WhatsApp não conectado'
+      });
+    }
+
+    const numero =
+      normalizarTelefoneBrasil(telefone);
+
+    const numeroWhatsApp =
+      await client.getNumberId(numero);
+
+    if (!numeroWhatsApp) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: 'Número não possui WhatsApp'
+      });
+    }
+
+    const mensagem =
+      montarMensagemSaldo({
+        cliente,
+        valorPagamento,
+        formaPagamento,
+        saldo
+      });
+
+    await client.sendMessage(
+      numeroWhatsApp._serialized,
+      mensagem
+    );
+
+    console.log(
+      `💳 Saldo enviado para ${cliente}`
+    );
+
+    return res.json({
+      sucesso: true
+    });
+
+  } catch (erro) {
+
+    console.error(
+      '❌ Erro na rota /enviar-saldo:',
+      erro
+    );
+
+    return res.status(500).json({
+      sucesso: false,
+      erro: erro.message
+    });
+
   }
 });
 
