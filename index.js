@@ -824,7 +824,8 @@ function montarMensagemPedido(dados) {
   if (
     dados.coleta &&
     dados.coleta.toLowerCase() !== 'sem' &&
-    dados.coleta.toLowerCase() !== 'sem coleta'
+    dados.coleta.toLowerCase() !== 'sem coleta' &&
+	dados.coleta.toLowerCase() !== 'sem coletas'
   ) {
     mensagem += `Coletar: ${dados.coleta}\n`;
   }
