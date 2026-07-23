@@ -1598,27 +1598,6 @@ app.post('/conta-prazo/registrar-pedido', async (req, res) => {
             const novoSaldo =
                 saldoAnterior + valorPedido;
 
-            if (
-                clienteAutorizado.limite !== null &&
-                novoSaldo >
-                    Number(clienteAutorizado.limite)
-            ) {
-                await conexao.rollback();
-
-                return res.status(200).json({
-                    sucesso: true,
-                    registrado: false,
-                    motivo: 'Limite de crédito excedido',
-                    cliente: clienteAutorizado.nome,
-                    saldoAtual:
-                        formatarValorConta(saldoAnterior),
-                    limite:
-                        formatarValorConta(
-                            clienteAutorizado.limite
-                        )
-                });
-            }
-
             await conexao.execute(
                 `
                 INSERT INTO movimentacoes_conta_prazo (
@@ -1846,14 +1825,6 @@ app.get('/financeiro', async (req, res) => {
 
                     <td class="${classeSaldo}">
                         R$ ${formatarValorConta(saldo)}
-                    </td>
-
-                    <td>
-                        ${
-                            cliente.limite === null
-                                ? 'Sem limite'
-                                : `R$ ${formatarValorConta(cliente.limite)}`
-                        }
                     </td>
 
                     <td>
@@ -2116,10 +2087,6 @@ app.get('/financeiro', async (req, res) => {
                     Cadastro, saldos, extratos e pagamentos.
                 </div>
             </div>
-
-            <a class="botao cinza" href="/">
-				Página inicial
-			</a>
         </div>
 
         ${
@@ -2137,7 +2104,6 @@ app.get('/financeiro', async (req, res) => {
                         <th>Cliente</th>
                         <th>Telefone</th>
                         <th>Saldo</th>
-                        <th>Limite</th>
                         <th>Situação</th>
                         <th>Ações</th>
                     </tr>
@@ -2182,9 +2148,6 @@ app.post('/financeiro/clientes', async (req, res) => {
         const telefone =
             normalizarTelefoneConta(req.body.telefone);
 
-        const limiteTexto =
-            String(req.body.limite || '').trim();
-
         if (!nome) {
             return res.redirect(
                 '/financeiro?tipo=erro&mensagem=' +
@@ -2199,37 +2162,17 @@ app.post('/financeiro/clientes', async (req, res) => {
             );
         }
 
-        let limite = null;
-
-        if (limiteTexto) {
-            limite = converterValorConta(limiteTexto);
-
-            if (
-                !Number.isFinite(limite) ||
-                limite <= 0
-            ) {
-                return res.redirect(
-                    '/financeiro?tipo=erro&mensagem=' +
-                    encodeURIComponent(
-                        'O limite de crédito informado é inválido.'
-                    )
-                );
-            }
-        }
-
         await db.execute(
             `
             INSERT INTO clientes_conta_prazo (
                 nome,
                 telefone,
-                ativo,
-                limite
+                ativo
             ) VALUES (?, ?, 1, ?)
             `,
             [
                 nome,
-                telefone,
-                limite
+                telefone
             ]
         );
 
