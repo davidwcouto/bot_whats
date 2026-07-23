@@ -857,6 +857,47 @@ Obrigado pela preferência!
   );
 }
 
+async function enviarSaldoWhatsApp({
+  telefone,
+  cliente,
+  valorPagamento,
+  formaPagamento,
+  saldo
+}) {
+  if (!client.info) {
+    throw new Error('WhatsApp não está conectado');
+  }
+
+  const numero = normalizarTelefoneBrasil(telefone);
+
+  const numeroWhatsApp =
+    await client.getNumberId(numero);
+
+  if (!numeroWhatsApp) {
+    throw new Error(
+      `O número ${telefone} não foi encontrado no WhatsApp`
+    );
+  }
+
+  const mensagem = montarMensagemSaldo({
+    cliente,
+    valorPagamento,
+    formaPagamento,
+    saldo
+  });
+
+  await client.sendMessage(
+    numeroWhatsApp._serialized,
+    mensagem
+  );
+
+  console.log(
+    `💳 Mensagem de saldo enviada para ${cliente}.`
+  );
+
+  return true;
+}
+
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
@@ -1568,42 +1609,13 @@ app.post('/enviar-saldo', async (req, res) => {
       });
     }
 
-    if (!client.info) {
-      return res.status(503).json({
-        sucesso: false,
-        erro: 'WhatsApp não conectado'
-      });
-    }
-
-    const numero =
-      normalizarTelefoneBrasil(telefone);
-
-    const numeroWhatsApp =
-      await client.getNumberId(numero);
-
-    if (!numeroWhatsApp) {
-      return res.status(404).json({
-        sucesso: false,
-        erro: 'Número não possui WhatsApp'
-      });
-    }
-
-    const mensagem =
-      montarMensagemSaldo({
-        cliente,
-        valorPagamento,
-        formaPagamento,
-        saldo
-      });
-
-    await client.sendMessage(
-      numeroWhatsApp._serialized,
-      mensagem
-    );
-
-    console.log(
-      `💳 Saldo enviado para ${cliente}`
-    );
+        await enviarSaldoWhatsApp({
+      telefone,
+      cliente,
+      valorPagamento,
+      formaPagamento,
+      saldo
+    });
 
     return res.json({
       sucesso: true
@@ -2721,6 +2733,28 @@ app.post('/financeiro/pagamentos', async (req, res) => {
             `${formatarValorConta(valorPagamento)} ` +
             `registrado para ${cliente.nome}.`
         );
+		
+				try {
+		  await enviarSaldoWhatsApp({
+			telefone: cliente.telefone,
+			cliente: cliente.nome,
+			valorPagamento:
+			  formatarValorConta(valorPagamento),
+			formaPagamento: forma,
+			saldo: formatarValorConta(novoSaldo)
+		  });
+
+		} catch (erroWhatsApp) {
+		  /*
+		   * O pagamento já foi registrado no banco.
+		   * Uma falha no WhatsApp não deve desfazer a baixa.
+		   */
+		  console.error(
+			`⚠️ Pagamento registrado para ${cliente.nome}, ` +
+			`mas a mensagem não foi enviada:`,
+			erroWhatsApp.message
+		  );
+		}
 
         return res.redirect(
             `/financeiro/extrato/${clienteId}` +
