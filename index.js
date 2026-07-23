@@ -1507,7 +1507,7 @@ try {
   }
 } catch (erroSaldo) {
   /*
-   * Um erro ao consultar o saldo não desfaz
+   * Um erro ao consultar o saldo não desfazz
    * o envio da mensagem principal do pedido.
    */
   console.error(
