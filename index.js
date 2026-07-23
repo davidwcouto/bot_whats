@@ -1923,33 +1923,6 @@ app.get('/financeiro', async (req, res) => {
                                 `
                                 : ''
                         }
-
-                        <form
-                            method="POST"
-                            action="/financeiro/clientes/${cliente.id}/status"
-                            class="form-inline"
-                        >
-                            <input
-                                type="hidden"
-                                name="ativo"
-                                value="${cliente.ativo ? 0 : 1}"
-                            >
-
-                            <button
-                                type="submit"
-                                class="botao ${
-                                    cliente.ativo
-                                        ? 'vermelho'
-                                        : 'verde'
-                                }"
-                            >
-                                ${
-                                    cliente.ativo
-                                        ? 'Desativar'
-                                        : 'Ativar'
-                                }
-                            </button>
-                        </form>
                     </td>
                 </tr>
             `;
