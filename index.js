@@ -752,6 +752,38 @@ function formatarValorConta(valor) {
     );
 }
 
+function escaparHtml(valor) {
+    return String(valor ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function formatarDataBrasil(data) {
+    if (!data) {
+        return '';
+    }
+
+    return new Date(data).toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo'
+    });
+}
+
+function mensagemPainel(texto, tipo = 'sucesso') {
+    const classe =
+        tipo === 'erro'
+            ? 'alerta erro'
+            : 'alerta sucesso';
+
+    return `
+        <div class="${classe}">
+            ${escaparHtml(texto)}
+        </div>
+    `;
+}
+
 function montarMensagemPedido(dados) {
   let mensagem =
 	`Pedido nº ${dados.pedido}\n` +
@@ -794,6 +826,7 @@ function montarMensagemPedido(dados) {
   }
 
   mensagem +=
+	`Atendente: ${dados.atendente || 'Não informado'}\n` +
     `\nA Coutech Cell agradece a preferência!`;
 
   return mensagem;
@@ -1204,9 +1237,6 @@ setInterval(async () => {
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.get("/", (req,res)=>{
-res.redirect("/painel")
-});
 app.get("/painel", (req, res) => {
 res.send(`
 <html>
@@ -1763,6 +1793,1265 @@ app.get('/conta-prazo/saldo/:telefone', async (req, res) => {
                 sucesso: false,
                 erro: erro.message
             });
+        }
+    }
+);
+
+app.get('/financeiro', async (req, res) => {
+    try {
+        const mensagem = String(req.query.mensagem || '');
+        const tipo = String(req.query.tipo || 'sucesso');
+
+        const [clientes] = await db.execute(`
+            SELECT
+                c.id,
+                c.nome,
+                c.telefone,
+                c.ativo,
+                c.limite,
+                c.criado_em,
+                COALESCE(SUM(m.valor), 0) AS saldo
+            FROM clientes_conta_prazo c
+            LEFT JOIN movimentacoes_conta_prazo m
+                ON m.cliente_id = c.id
+            GROUP BY
+                c.id,
+                c.nome,
+                c.telefone,
+                c.ativo,
+                c.limite,
+                c.criado_em
+            ORDER BY c.nome
+        `);
+
+        let linhasClientes = '';
+
+        for (const cliente of clientes) {
+            const saldo = Number(cliente.saldo || 0);
+
+            const classeSaldo =
+                saldo > 0
+                    ? 'saldo-devedor'
+                    : 'saldo-zerado';
+
+            linhasClientes += `
+                <tr>
+                    <td>
+                        ${escaparHtml(cliente.nome)}
+                    </td>
+
+                    <td>
+                        ${escaparHtml(cliente.telefone)}
+                    </td>
+
+                    <td class="${classeSaldo}">
+                        R$ ${formatarValorConta(saldo)}
+                    </td>
+
+                    <td>
+                        ${
+                            cliente.limite === null
+                                ? 'Sem limite'
+                                : `R$ ${formatarValorConta(cliente.limite)}`
+                        }
+                    </td>
+
+                    <td>
+                        ${
+                            cliente.ativo
+                                ? '<span class="status ativo">Ativo</span>'
+                                : '<span class="status inativo">Inativo</span>'
+                        }
+                    </td>
+
+                    <td class="acoes">
+                        <a
+                            class="botao azul"
+                            href="/financeiro/extrato/${cliente.id}"
+                        >
+                            Ver extrato
+                        </a>
+
+                        ${
+                            saldo > 0 && cliente.ativo
+                                ? `
+                                    <a
+                                        class="botao verde"
+                                        href="/financeiro/pagamento/${cliente.id}"
+                                    >
+                                        Registrar pagamento
+                                    </a>
+                                `
+                                : ''
+                        }
+
+                        <form
+                            method="POST"
+                            action="/financeiro/clientes/${cliente.id}/status"
+                            class="form-inline"
+                        >
+                            <input
+                                type="hidden"
+                                name="ativo"
+                                value="${cliente.ativo ? 0 : 1}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="botao ${
+                                    cliente.ativo
+                                        ? 'vermelho'
+                                        : 'verde'
+                                }"
+                            >
+                                ${
+                                    cliente.ativo
+                                        ? 'Desativar'
+                                        : 'Ativar'
+                                }
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+            `;
+        }
+
+        res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Contas a Prazo</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px;
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1250px;
+            margin: auto;
+        }
+
+        .topo {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        h1, h2 {
+            margin-top: 0;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+        }
+
+        .grade {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #ccd1d7;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+
+        button, .botao {
+            display: inline-block;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 14px;
+            text-decoration: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: white;
+        }
+
+        .verde {
+            background: #198754;
+        }
+
+        .azul {
+            background: #0d6efd;
+        }
+
+        .vermelho {
+            background: #dc3545;
+        }
+
+        .cinza {
+            background: #6c757d;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 9px;
+            border-bottom: 1px solid #e1e5e9;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        th {
+            background: #263544;
+            color: white;
+        }
+
+        .acoes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .form-inline {
+            display: inline;
+            margin: 0;
+        }
+
+        .status {
+            padding: 5px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status.ativo {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .status.inativo {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        .saldo-devedor {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .saldo-zerado {
+            color: #198754;
+            font-weight: bold;
+        }
+
+        .alerta {
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .alerta.sucesso {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .alerta.erro {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        @media (max-width: 800px) {
+            body {
+                padding: 15px;
+            }
+
+            .grade {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+            }
+
+            .topo {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="topo">
+            <div>
+                <h1>💳 Contas a Prazo</h1>
+                <div>
+                    Cadastro, saldos, extratos e pagamentos.
+                </div>
+            </div>
+
+            <a class="botao cinza" href="/">
+				Página inicial
+			</a>
+        </div>
+
+        ${
+            mensagem
+                ? mensagemPainel(mensagem, tipo)
+                : ''
+        }
+
+        <div class="card">
+            <h2>Cadastrar cliente autorizado</h2>
+
+            <form
+                method="POST"
+                action="/financeiro/clientes"
+            >
+                <div class="grade">
+                    <div>
+                        <label>Nome do cliente</label>
+
+                        <input
+                            type="text"
+                            name="nome"
+                            required
+                        >
+                    </div>
+
+                    <div>
+                        <label>Telefone</label>
+
+                        <input
+                            type="text"
+                            name="telefone"
+                            placeholder="51999999999"
+                            required
+                        >
+                    </div>
+
+                    <div>
+                        <label>Limite de crédito</label>
+
+                        <input
+                            type="text"
+                            name="limite"
+                            placeholder="Opcional"
+                        >
+                    </div>
+                </div>
+
+                <br>
+
+                <button type="submit" class="verde">
+                    Cadastrar cliente
+                </button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Clientes cadastrados</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cliente</th>
+                        <th>Telefone</th>
+                        <th>Saldo</th>
+                        <th>Limite</th>
+                        <th>Situação</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    ${
+                        linhasClientes ||
+                        `
+                            <tr>
+                                <td colspan="6">
+                                    Nenhum cliente cadastrado.
+                                </td>
+                            </tr>
+                        `
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+        `);
+
+    } catch (erro) {
+        console.error(
+            '❌ Erro ao abrir painel de contas:',
+            erro
+        );
+
+        res.status(500).send(
+            `Erro ao abrir painel: ${escaparHtml(erro.message)}`
+        );
+    }
+});
+
+app.post('/financeiro/clientes', async (req, res) => {
+    try {
+        const nome =
+            String(req.body.nome || '').trim();
+
+        const telefone =
+            normalizarTelefoneConta(req.body.telefone);
+
+        const limiteTexto =
+            String(req.body.limite || '').trim();
+
+        if (!nome) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent('Informe o nome do cliente.')
+            );
+        }
+
+        if (!telefone) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent('Informe um telefone válido.')
+            );
+        }
+
+        let limite = null;
+
+        if (limiteTexto) {
+            limite = converterValorConta(limiteTexto);
+
+            if (
+                !Number.isFinite(limite) ||
+                limite <= 0
+            ) {
+                return res.redirect(
+                    '/financeiro?tipo=erro&mensagem=' +
+                    encodeURIComponent(
+                        'O limite de crédito informado é inválido.'
+                    )
+                );
+            }
+        }
+
+        await db.execute(
+            `
+            INSERT INTO clientes_conta_prazo (
+                nome,
+                telefone,
+                ativo,
+                limite
+            ) VALUES (?, ?, 1, ?)
+            `,
+            [
+                nome,
+                telefone,
+                limite
+            ]
+        );
+
+        return res.redirect(
+            '/financeiro?mensagem=' +
+            encodeURIComponent(
+                'Cliente cadastrado com sucesso.'
+            )
+        );
+
+    } catch (erro) {
+        if (erro.code === 'ER_DUP_ENTRY') {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent(
+                    'Já existe um cliente cadastrado com esse telefone.'
+                )
+            );
+        }
+
+        console.error(
+            '❌ Erro ao cadastrar cliente:',
+            erro
+        );
+
+        return res.redirect(
+            '/financeiro?tipo=erro&mensagem=' +
+            encodeURIComponent(erro.message)
+        );
+    }
+});
+
+app.post('/financeiro/clientes/:id/status', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            const ativo =
+                Number(req.body.ativo) === 1 ? 1 : 0;
+
+            if (!Number.isInteger(id) || id <= 0) {
+                throw new Error('Cliente inválido.');
+            }
+
+            const [resultado] = await db.execute(
+                `
+                UPDATE clientes_conta_prazo
+                SET ativo = ?
+                WHERE id = ?
+                `,
+                [ativo, id]
+            );
+
+            if (resultado.affectedRows === 0) {
+                throw new Error('Cliente não encontrado.');
+            }
+
+            return res.redirect(
+                '/financeiro?mensagem=' +
+                encodeURIComponent(
+                    ativo
+                        ? 'Cliente ativado com sucesso.'
+                        : 'Cliente desativado com sucesso.'
+                )
+            );
+
+        } catch (erro) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent(erro.message)
+            );
+        }
+    }
+);
+
+app.get('/financeiro/pagamento/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+			if (!Number.isInteger(id) || id <= 0) {
+				return res.status(400).send(
+					'Identificador do cliente inválido.'
+				);
+			}			
+
+            const [clientes] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.id = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo
+                LIMIT 1
+                `,
+                [id]
+            );
+
+            if (clientes.length === 0) {
+                return res.status(404).send(
+                    'Cliente não encontrado.'
+                );
+            }
+
+            const cliente = clientes[0];
+            const saldo = Number(cliente.saldo || 0);
+
+            res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Registrar pagamento</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            padding: 30px;
+        }
+
+        .card {
+            max-width: 600px;
+            margin: auto;
+            background: white;
+            padding: 28px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 11px;
+            margin-top: 6px;
+            margin-bottom: 16px;
+            border: 1px solid #ccd1d7;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        button, a {
+            display: inline-block;
+            padding: 11px 16px;
+            border: none;
+            border-radius: 6px;
+            text-decoration: none;
+            color: white;
+            cursor: pointer;
+        }
+
+        button {
+            background: #198754;
+        }
+
+        a {
+            background: #6c757d;
+        }
+
+        .saldo {
+            padding: 15px;
+            background: #fff3cd;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>Registrar pagamento</h1>
+
+        <p>
+            <strong>Cliente:</strong>
+            ${escaparHtml(cliente.nome)}
+        </p>
+
+        <p>
+            <strong>Telefone:</strong>
+            ${escaparHtml(cliente.telefone)}
+        </p>
+
+        <div class="saldo">
+            Saldo atual:
+            R$ ${formatarValorConta(saldo)}
+        </div>
+
+        <form
+            method="POST"
+            action="/financeiro/pagamentos"
+        >
+            <input
+                type="hidden"
+                name="cliente_id"
+                value="${cliente.id}"
+            >
+
+            <label>Valor pago</label>
+
+            <input
+                type="text"
+                name="valor"
+                placeholder="Ex.: 100,00"
+                required
+            >
+
+            <label>Forma de pagamento</label>
+
+            <select name="forma" required>
+                <option value="Pix">Pix</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Cartão">Cartão</option>
+                <option value="Transferência">
+                    Transferência
+                </option>
+                <option value="Outro">Outro</option>
+            </select>
+
+            <label>Observação</label>
+
+            <textarea
+                name="observacao"
+                rows="3"
+                placeholder="Ex.: Pagamento parcial"
+            ></textarea>
+
+            <button type="submit">
+                Confirmar pagamento
+            </button>
+
+            <a href="/financeiro">
+                Cancelar
+            </a>
+        </form>
+    </div>
+</body>
+</html>
+            `);
+
+        } catch (erro) {
+            res.status(500).send(
+                `Erro: ${escaparHtml(erro.message)}`
+            );
+        }
+    }
+);
+
+app.post('/financeiro/pagamentos', async (req, res) => {
+    let conexao;
+
+    try {
+        const clienteId =
+            Number(req.body.cliente_id);
+
+        const valorPagamento =
+            converterValorConta(req.body.valor);
+
+        const forma =
+            String(req.body.forma || '').trim();
+
+        const observacao =
+            String(
+                req.body.observacao ||
+                'Pagamento parcial'
+            ).trim();
+
+        if (
+            !Number.isInteger(clienteId) ||
+            clienteId <= 0
+        ) {
+            throw new Error('Cliente inválido.');
+        }
+
+        if (
+            !Number.isFinite(valorPagamento) ||
+            valorPagamento <= 0
+        ) {
+            throw new Error(
+                'Informe um valor de pagamento válido.'
+            );
+        }
+
+        if (!forma) {
+            throw new Error(
+                'Informe a forma de pagamento.'
+            );
+        }
+
+        conexao = await db.getConnection();
+
+        await conexao.beginTransaction();
+
+        const [clientes] = await conexao.execute(
+            `
+            SELECT
+                id,
+                nome,
+                telefone,
+                ativo
+            FROM clientes_conta_prazo
+            WHERE id = ?
+            LIMIT 1
+            FOR UPDATE
+            `,
+            [clienteId]
+        );
+
+        if (clientes.length === 0) {
+            throw new Error('Cliente não encontrado.');
+        }
+
+        const cliente = clientes[0];
+
+        const [resultadoSaldo] =
+            await conexao.execute(
+                `
+                SELECT
+                    COALESCE(SUM(valor), 0) AS saldo
+                FROM movimentacoes_conta_prazo
+                WHERE cliente_id = ?
+                `,
+                [clienteId]
+            );
+
+        const saldoAtual =
+            Number(resultadoSaldo[0].saldo || 0);
+
+        if (saldoAtual <= 0) {
+            throw new Error(
+                'Este cliente não possui saldo em aberto.'
+            );
+        }
+
+        if (valorPagamento > saldoAtual) {
+            throw new Error(
+                `O pagamento é maior que o saldo atual de ` +
+                `R$ ${formatarValorConta(saldoAtual)}.`
+            );
+        }
+
+        await conexao.execute(
+            `
+            INSERT INTO movimentacoes_conta_prazo (
+                cliente_id,
+                tipo,
+                pedido,
+                valor,
+                forma,
+                observacao,
+                operador
+            ) VALUES (
+                ?,
+                'PAGAMENTO',
+                NULL,
+                ?,
+                ?,
+                ?,
+                ?
+            )
+            `,
+            [
+                clienteId,
+                -valorPagamento,
+                forma,
+                observacao || 'Pagamento parcial',
+                'Painel Railway'
+            ]
+        );
+
+        await conexao.commit();
+
+        const novoSaldo =
+            saldoAtual - valorPagamento;
+
+        console.log(
+            `💵 Pagamento de R$ ` +
+            `${formatarValorConta(valorPagamento)} ` +
+            `registrado para ${cliente.nome}.`
+        );
+
+        return res.redirect(
+            `/financeiro/extrato/${clienteId}` +
+            `?mensagem=` +
+            encodeURIComponent(
+                `Pagamento de R$ ` +
+                `${formatarValorConta(valorPagamento)} ` +
+                `registrado. Novo saldo: R$ ` +
+                `${formatarValorConta(novoSaldo)}.`
+            )
+        );
+
+    } catch (erro) {
+        if (conexao) {
+            try {
+                await conexao.rollback();
+            } catch {}
+        }
+
+        console.error(
+            '❌ Erro ao registrar pagamento:',
+            erro
+        );
+
+        const clienteId =
+            Number(req.body.cliente_id);
+
+        return res.redirect(
+            `/financeiro/extrato/${clienteId}` +
+            `?tipo=erro&mensagem=` +
+            encodeURIComponent(erro.message)
+        );
+
+    } finally {
+        if (conexao) {
+            conexao.release();
+        }
+    }
+});
+
+app.get('/financeiro/extrato/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+			if (!Number.isInteger(id) || id <= 0) {
+				return res.status(400).send(
+					'Identificador do cliente inválido.'
+				);
+			}
+
+            const mensagem =
+                String(req.query.mensagem || '');
+
+            const tipo =
+                String(req.query.tipo || 'sucesso');
+
+            const [clientes] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.id = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite
+                LIMIT 1
+                `,
+                [id]
+            );
+
+            if (clientes.length === 0) {
+                return res.status(404).send(
+                    'Cliente não encontrado.'
+                );
+            }
+
+            const cliente = clientes[0];
+
+            const [movimentacoes] = await db.execute(
+                `
+                SELECT
+                    id,
+                    tipo,
+                    pedido,
+                    valor,
+                    forma,
+                    observacao,
+                    operador,
+                    criado_em
+                FROM movimentacoes_conta_prazo
+                WHERE cliente_id = ?
+                ORDER BY criado_em DESC, id DESC
+                `,
+                [id]
+            );
+
+            let linhas = '';
+
+            for (const movimentacao of movimentacoes) {
+                const valor =
+                    Number(movimentacao.valor || 0);
+
+                const classeValor =
+                    valor >= 0
+                        ? 'compra'
+                        : 'pagamento';
+
+                linhas += `
+                    <tr>
+                        <td>
+                            ${formatarDataBrasil(
+                                movimentacao.criado_em
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(movimentacao.tipo)}
+                        </td>
+
+                        <td>
+                            ${
+                                movimentacao.pedido
+                                    ? escaparHtml(
+                                        movimentacao.pedido
+                                    )
+                                    : '—'
+                            }
+                        </td>
+
+                        <td class="${classeValor}">
+                            ${
+                                valor >= 0
+                                    ? '+'
+                                    : '-'
+                            }
+                            R$ ${formatarValorConta(
+                                Math.abs(valor)
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.forma || ''
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.observacao || ''
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.operador || ''
+                            )}
+                        </td>
+                    </tr>
+                `;
+            }
+
+            res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Extrato</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            padding: 30px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 22px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        .saldo {
+            font-size: 26px;
+            font-weight: bold;
+            color: #dc3545;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 11px;
+            border-bottom: 1px solid #e1e5e9;
+            text-align: left;
+        }
+
+        th {
+            background: #263544;
+            color: white;
+        }
+
+        .compra {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .pagamento {
+            color: #198754;
+            font-weight: bold;
+        }
+
+        .botao {
+            display: inline-block;
+            padding: 11px 15px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: white;
+            margin-right: 6px;
+        }
+
+        .verde {
+            background: #198754;
+        }
+
+        .cinza {
+            background: #6c757d;
+        }
+
+        .alerta {
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .alerta.sucesso {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .alerta.erro {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        @media (max-width: 800px) {
+            body {
+                padding: 15px;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        ${
+            mensagem
+                ? mensagemPainel(mensagem, tipo)
+                : ''
+        }
+
+        <div class="card">
+            <h1>
+                Extrato — ${escaparHtml(cliente.nome)}
+            </h1>
+
+            <p>
+                Telefone:
+                ${escaparHtml(cliente.telefone)}
+            </p>
+
+            <p class="saldo">
+                Saldo atual:
+                R$ ${formatarValorConta(cliente.saldo)}
+            </p>
+
+            ${
+                Number(cliente.saldo) > 0 &&
+                cliente.ativo
+                    ? `
+                        <a
+                            class="botao verde"
+                            href="/financeiro/pagamento/${cliente.id}"
+                        >
+                            Registrar pagamento
+                        </a>
+                    `
+                    : ''
+            }
+
+            <a
+                class="botao cinza"
+                href="/financeiro"
+            >
+                Voltar
+            </a>
+        </div>
+
+        <div class="card">
+            <h2>Movimentações</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Tipo</th>
+                        <th>Pedido</th>
+                        <th>Valor</th>
+                        <th>Forma</th>
+                        <th>Observação</th>
+                        <th>Operador</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    ${
+                        linhas ||
+                        `
+                            <tr>
+                                <td colspan="7">
+                                    Nenhuma movimentação registrada.
+                                </td>
+                            </tr>
+                        `
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+            `);
+
+        } catch (erro) {
+            console.error(
+                '❌ Erro ao consultar extrato:',
+                erro
+            );
+
+            res.status(500).send(
+                `Erro: ${escaparHtml(erro.message)}`
+            );
         }
     }
 );
