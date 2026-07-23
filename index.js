@@ -826,8 +826,8 @@ function montarMensagemPedido(dados) {
   }
 
   mensagem +=
-	`Atendente: ${dados.atendente || 'Não informado'}\n` +
-    `\nA Coutech Cell agradece a preferência!`;
+	`\nAtendente: ${dados.atendente || 'Não informado'}\n` +
+    `A Coutech Cell agradece a preferência!`;
 
   return mensagem;
 }
@@ -2127,54 +2127,6 @@ app.get('/financeiro', async (req, res) => {
                 ? mensagemPainel(mensagem, tipo)
                 : ''
         }
-
-        <div class="card">
-            <h2>Cadastrar cliente autorizado</h2>
-
-            <form
-                method="POST"
-                action="/financeiro/clientes"
-            >
-                <div class="grade">
-                    <div>
-                        <label>Nome do cliente</label>
-
-                        <input
-                            type="text"
-                            name="nome"
-                            required
-                        >
-                    </div>
-
-                    <div>
-                        <label>Telefone</label>
-
-                        <input
-                            type="text"
-                            name="telefone"
-                            placeholder="51999999999"
-                            required
-                        >
-                    </div>
-
-                    <div>
-                        <label>Limite de crédito</label>
-
-                        <input
-                            type="text"
-                            name="limite"
-                            placeholder="Opcional"
-                        >
-                    </div>
-                </div>
-
-                <br>
-
-                <button type="submit" class="verde">
-                    Cadastrar cliente
-                </button>
-            </form>
-        </div>
 
         <div class="card">
             <h2>Clientes cadastrados</h2>
