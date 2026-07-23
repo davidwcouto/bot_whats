@@ -1421,16 +1421,84 @@ app.post('/enviar-pedido', async (req, res) => {
 	  coleta
 	});
 
+await client.sendMessage(
+  numeroWhatsApp._serialized,
+  mensagem
+);
+
+let saldoEnviado = false;
+
+try {
+  const telefoneConta =
+    normalizarTelefoneConta(telefone);
+
+  const [clientesConta] = await db.execute(
+    `
+    SELECT
+      c.id,
+      c.nome,
+      c.ativo,
+      COALESCE(SUM(m.valor), 0) AS saldo
+    FROM clientes_conta_prazo c
+    LEFT JOIN movimentacoes_conta_prazo m
+      ON m.cliente_id = c.id
+    WHERE c.telefone = ?
+      AND c.ativo = 1
+    GROUP BY
+      c.id,
+      c.nome,
+      c.ativo
+    LIMIT 1
+    `,
+    [telefoneConta]
+  );
+
+  /*
+   * Só envia o saldo quando o cliente estiver
+   * cadastrado e ativo na conta a prazo.
+   */
+  if (clientesConta.length > 0) {
+    const clienteConta = clientesConta[0];
+
+    const saldoAtual =
+      Number(clienteConta.saldo || 0);
+
+    const mensagemSaldo =
+      `💳 *Saldo da sua conta a prazo*\n\n` +
+      `Saldo atual: *R$ ${formatarValorConta(saldoAtual)}*`;
+
     await client.sendMessage(
       numeroWhatsApp._serialized,
-      mensagem
+      mensagemSaldo
     );
 
-    return res.json({
-      sucesso: true,
-      pedido,
-      telefone: numero
-    });
+    saldoEnviado = true;
+
+    console.log(
+      `💳 Saldo de R$ ` +
+      `${formatarValorConta(saldoAtual)} ` +
+      `enviado para ${clienteConta.nome}.`
+    );
+  }
+} catch (erroSaldo) {
+  /*
+   * Um erro ao consultar o saldo não desfaz
+   * o envio da mensagem principal do pedido.
+   */
+  console.error(
+    `⚠️ Pedido ${pedido} foi enviado, mas não foi ` +
+    `possível enviar o saldo:`,
+    erroSaldo.message
+  );
+}
+
+return res.json({
+  sucesso: true,
+  pedido,
+  telefone: numero,
+  saldoEnviado
+});
+
   } catch (erro) {
     console.error(
       '❌ Erro na rota /enviar-pedido:',
