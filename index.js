@@ -697,6 +697,61 @@ function normalizarTelefoneBrasil(telefone) {
   return `55${numero}`;
 }
 
+function normalizarTelefoneConta(telefone) {
+    let numero = String(telefone || '')
+        .replace(/\D/g, '');
+
+    if (
+        numero.startsWith('55') &&
+        (numero.length === 12 || numero.length === 13)
+    ) {
+        numero = numero.substring(2);
+    }
+
+    return numero;
+}
+
+function converterValorConta(valor) {
+    if (
+        valor === null ||
+        valor === undefined ||
+        valor === ''
+    ) {
+        return NaN;
+    }
+
+    if (typeof valor === 'number') {
+        return valor;
+    }
+
+    let texto = String(valor)
+        .replace(/R\$/gi, '')
+        .trim();
+
+    if (
+        texto.includes('.') &&
+        texto.includes(',')
+    ) {
+        texto = texto
+            .replace(/\./g, '')
+            .replace(',', '.');
+    } else if (texto.includes(',')) {
+        texto = texto.replace(',', '.');
+    }
+
+    return Number(texto);
+}
+
+function formatarValorConta(valor) {
+    return Number(valor || 0).toLocaleString(
+        'pt-BR',
+        {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }
+    );
+}
+
 function montarMensagemPedido(dados) {
   let mensagem =
 	`Pedido nº ${dados.pedido}\n` +
