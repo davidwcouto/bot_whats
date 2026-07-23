@@ -851,7 +851,6 @@ ${dados.formaPagamento}
 *R$ ${dados.saldo}*
 
 Obrigado pela preferência!
-
 *COUTECH CELL*`
   );
 }
