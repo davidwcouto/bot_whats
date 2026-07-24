@@ -899,6 +899,15 @@ async function enviarSaldoWhatsApp({
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
+	console.log("══════════════════════════════");
+    console.log({
+        type: message.type,
+        body: message.body,
+        hasMedia: message.hasMedia,
+        from: message.from
+    });
+    console.log("══════════════════════════════");
+	
 	try {
 		if (message.fromMe) return;
 		if (message.timestamp < inicioBot - 10) return;
@@ -909,6 +918,11 @@ client.on("message", async (message) => {
 	
 	const chatId = message.from;
 	const msg = message.body.toLowerCase().trim();
+	
+	if (!msg) {
+    console.log("Mensagem vazia ignorada.");
+    return;
+	}
 
 	let phone;
 
