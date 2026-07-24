@@ -899,15 +899,6 @@ async function enviarSaldoWhatsApp({
 // Evento de mensagem recebida
 client.on("message", async (message) => {
 	
-	console.log("══════════════════════════════");
-    console.log({
-        type: message.type,
-        body: message.body,
-        hasMedia: message.hasMedia,
-        from: message.from
-    });
-    console.log("══════════════════════════════");
-	
 	try {
 		if (message.fromMe) return;
 		if (message.timestamp < inicioBot - 10) return;
