@@ -919,9 +919,9 @@ client.on("message", async (message) => {
 	const chatId = message.from;
 	const msg = message.body.toLowerCase().trim();
 	
-	if (!msg) {
-    console.log("Mensagem vazia ignorada.");
-    return;
+	if (!msg && !message.hasMedia) {
+		console.log("⚠️ Mensagem vazia ignorada.");
+		return;
 	}
 
 	let phone;
