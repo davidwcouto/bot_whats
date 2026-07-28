@@ -1,5 +1,2 @@
-2026/07/20-20:12:06.265 3140 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
-2026/07/20-20:12:06.270 3140 Recovering log #6
-2026/07/20-20:12:06.270 3140 Level-0 table #9: started
-2026/07/20-20:12:06.276 3140 Level-0 table #9: 14478 bytes OK
-2026/07/20-20:12:06.280 3140 Delete type=0 #6
+2026/07/28-09:50:23.695 21bc Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb since it was missing.
+2026/07/28-09:50:23.731 21bc Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
