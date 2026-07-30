@@ -264,7 +264,6 @@ Digite 2️⃣ para atendimento.`;
     }
 
     try {
-        console.log(`🔎 Consultando GestãoClick: ${pesquisa}`);
 
         const resposta = await axios.get(
             "https://api.gestaoclick.com/produtos",
@@ -280,7 +279,7 @@ Digite 2️⃣ para atendimento.`;
                 },
 
                 params: {
-					loja_id: process.env.GESTAOCLICK_LOJA_ID,
+					loja_id: 552685,
 					nome: pesquisa,
 					ativo: 1
 				},
@@ -368,10 +367,6 @@ Digite 2️⃣ para atendimento.`;
         });
 
         mensagem += "Para fazer pedido digite 2️⃣";
-
-        console.log(
-            `✅ GestãoClick retornou ${encontrados.length} produto(s)`
-        );
 
         return mensagem;
 
