@@ -276,13 +276,14 @@ Digite 2️⃣ para atendimento.`;
                     "secret-access-token":
                         process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN,
 
-                    "Accept": "application/json"
+                    "Accept": "application/json"	
                 },
 
                 params: {
-                    nome: pesquisa,
-                    ativo: 1
-                },
+					loja_id: process.env.GESTAOCLICK_LOJA_ID,
+					nome: pesquisa,
+					ativo: 1
+				},
 
                 timeout: 15000
             }
