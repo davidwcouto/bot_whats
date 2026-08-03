@@ -79,15 +79,23 @@ try {
 
 // Criando o cliente do WhatsApp Web
 const client = new Client({
-	authStrategy: new LocalAuth(),
-		puppeteer:{
-		headless:true,
-		    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-			args:[
-				'--no-sandbox',
-				'--disable-setuid-sandbox'
-			]
-		}
+    authStrategy: new LocalAuth(),
+
+    puppeteer: {
+        headless: true,
+
+        executablePath:
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+
+        protocolTimeout: 180000,
+
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage"
+        ]
+    }
 });
 
 let atendimentoHumano = new Set(); // Armazena usuários em atendimento humano
@@ -133,7 +141,6 @@ const removerSilencedChats = (chatId) => {
     setTimeout(() => {
 		silencedChats.delete(chatId);
 		clientesAtendidos.delete(chatId);
-		console.log(`Chat reativado automaticamente: ${chatId}`);
     }, 30 * 60 * 1000);
 };
 
@@ -1279,23 +1286,53 @@ async function iniciarClienteWhatsApp() {
 
 iniciarClienteWhatsApp();
 
+let falhasConsecutivasWhatsApp = 0;
+let verificandoEstadoWhatsApp = false;
+
 setInterval(async () => {
+    if (verificandoEstadoWhatsApp) {
+        console.log(
+            "⚠ Verificação anterior do WhatsApp ainda não terminou."
+        );
+        return;
+    }
+
+    verificandoEstadoWhatsApp = true;
+
     try {
         const state = await client.getState();
 
-        if (!state) {
-            console.log("⚠ WhatsApp ainda está inicializando.");
+        if (state === "CONNECTED") {
+            falhasConsecutivasWhatsApp = 0;
             return;
         }
 
-        if (state !== "CONNECTED") {
-            console.log(`⚠ Estado atual do WhatsApp: ${state}`);
-        }
-    } catch (erro) {
-        console.error(
-            "Erro ao verificar o estado:",
-            erro.message || erro
+        falhasConsecutivasWhatsApp++;
+
+        console.warn(
+            `⚠ Estado do WhatsApp: ${state || "desconhecido"}. ` +
+            `Falha ${falhasConsecutivasWhatsApp}/3.`
         );
+
+    } catch (erro) {
+        falhasConsecutivasWhatsApp++;
+
+        console.error(
+            `❌ Erro ao verificar o estado ` +
+            `(${falhasConsecutivasWhatsApp}/3):`,
+            erro?.message || erro
+        );
+
+    } finally {
+        verificandoEstadoWhatsApp = false;
+    }
+
+    if (falhasConsecutivasWhatsApp >= 3) {
+        console.error(
+            "♻️ Puppeteer não está respondendo. Reiniciando o serviço."
+        );
+
+        process.exit(1);
     }
 }, 60000);
 
