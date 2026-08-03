@@ -1,7 +1,12 @@
-2026/08/03-10:40:53.784 3bb8 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/08/03-10:40:53.785 3bb8 Recovering log #62
-2026/08/03-10:40:53.849 3bb8 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000062.log 
-2026/08/03-10:40:53.850 3bb8 Delete type=2 #59
-2026/08/03-10:40:53.850 3bb8 Delete type=2 #60
-2026/08/03-10:40:53.850 3bb8 Delete type=2 #61
-2026/08/03-10:40:53.850 3bb8 Delete type=2 #63
+2026/08/03-14:59:55.583 44b4 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/08/03-14:59:55.583 44b4 Recovering log #165
+2026/08/03-14:59:55.631 44b4 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000165.log 
+2026/08/03-14:59:55.631 44b4 Delete type=2 #151
+2026/08/03-14:59:55.631 44b4 Delete type=2 #161
+2026/08/03-14:59:55.631 44b4 Delete type=2 #164
+2026/08/03-14:59:55.631 44b4 Delete type=2 #167
+2026/08/03-14:59:55.631 44b4 Delete type=2 #168
+2026/08/03-14:59:55.631 44b4 Delete type=2 #169
+2026/08/03-14:59:55.631 44b4 Delete type=2 #170
+2026/08/03-14:59:55.677 44b4 Delete type=2 #171
+2026/08/03-14:59:55.677 44b4 Delete type=2 #172
