@@ -87,7 +87,7 @@ const client = new Client({
         executablePath:
             process.env.PUPPETEER_EXECUTABLE_PATH,
 
-        protocolTimeout: 180000,
+        protocolTimeout: 90000,
 
         args: [
             "--no-sandbox",
@@ -2361,20 +2361,6 @@ app.post('/financeiro/clientes', async (req, res) => {
                 encodeURIComponent('Informe um telefone válido.')
             );
         }
-
-        await db.execute(
-            `
-            INSERT INTO clientes_conta_prazo (
-                nome,
-                telefone,
-                ativo
-            ) VALUES (?, ?, 1, ?)
-            `,
-            [
-                nome,
-                telefone
-            ]
-        );
 
         return res.redirect(
             '/financeiro?mensagem=' +
