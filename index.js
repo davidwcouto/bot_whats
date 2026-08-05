@@ -197,11 +197,20 @@ function formatarPreco(valor) {
 
 function prepararPesquisa(texto) {
     let pesquisa = normalizarTexto(texto);
+	
+	// Remove marcas que podem não estar no nome cadastrado
+	pesquisa = pesquisa
+	  .replace(/\bsamsung\b/g, '')
+	  .replace(/\bmotorola\b/g, '')
+	  .replace(/\bapple\b/g, '')
+	  .replace(/\s+/g, ' ')
+	  .trim();
 
     // Tela
     pesquisa = pesquisa.replace(/\bdisplay\b/g, "tela");
     pesquisa = pesquisa.replace(/\bfrontal\b/g, "tela");
     pesquisa = pesquisa.replace(/\bcombo\b/g, "tela");
+	pesquisa = pesquisa.replace(/\bnacional\b/g, "nac");
 
     // Placa de carga
     pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
@@ -271,7 +280,6 @@ Digite 2️⃣ para atendimento.`;
     }
 
     try {
-
         const resposta = await axios.get(
             "https://api.gestaoclick.com/produtos",
             {
@@ -793,48 +801,65 @@ function mensagemPainel(texto, tipo = 'sucesso') {
 
 function montarMensagemPedido(dados) {
   let mensagem =
-	`Pedido nº ${dados.pedido}\n` +
+    `Pedido nº ${dados.pedido}\n` +
     `Cliente: ${dados.cliente || 'cliente'}\n` +
     `Endereço: ${dados.endereco}\n` +
 	`Cidade: ${dados.cidade}\n`;
 
-  if (dados.produtos?.length) {
-    mensagem += `*Produtos:*\n`;
+	if (dados.produtos?.length) {
+		mensagem += `*Produtos:*\n`;
 
-    for (const produto of dados.produtos) {
-      mensagem +=
-        `• ${produto.nome}\n` +
-        `  Qtd: ${produto.quantidade} | Valor: R$ ${produto.valorTotal}\n`;
-    }
+	for (const produto of dados.produtos) {
+		mensagem +=
+		  `• ${produto.nome}\n` +
+		  `  Qtd: ${produto.quantidade} |`;
 
-    mensagem += '\n';
-  }
+		if (produto.desconto && produto.desconto !== '0,00') {
+
+		  mensagem +=
+			`  Vlr. Unit: R$ ${produto.valorUnitario}\n` +
+			`  Desc. Item: R$ ${produto.desconto}\n`;
+
+		}
+
+		mensagem +=
+		  `  Valor: R$ ${produto.valorTotal}\n\n`;
+	  }
+	}
 
   if (dados.valorProdutos) {
-    mensagem += `Valor dos produtos: R$ ${dados.valorProdutos}\n`;
+    mensagem +=
+      `Valor dos produtos: R$ ${dados.valorProdutos}\n`;
   }
 
-  if (dados.desconto && dados.desconto !== '0,00') {
-    mensagem += `Desconto: R$ ${dados.desconto}\n`;
+  if (
+    dados.desconto &&
+    dados.desconto !== '0,00'
+  ) {
+    mensagem +=
+      `Desconto geral: R$ ${dados.desconto}\n`;
   }
 
-  mensagem += `*Total: R$ ${dados.total || '0,00'}*\n`;
+  mensagem +=
+    `*Total: R$ ${dados.total || '0,00'}*\n`;
 
   if (dados.formaPagamento) {
-    mensagem += `Forma de pagamento: ${dados.formaPagamento}\n`;
+    mensagem +=
+      `Forma de pagamento: ${dados.formaPagamento}\n`;
   }
 
   if (
     dados.coleta &&
     dados.coleta.toLowerCase() !== 'sem' &&
     dados.coleta.toLowerCase() !== 'sem coleta' &&
-	dados.coleta.toLowerCase() !== 'sem coletas'
+    dados.coleta.toLowerCase() !== 'sem coletas'
   ) {
-    mensagem += `Coletar: ${dados.coleta}\n`;
+    mensagem +=
+      `Coletar: ${dados.coleta}\n`;
   }
 
   mensagem +=
-	`\nAtendente: ${dados.atendente || 'Não informado'}\n` +
+    `\nAtendente: ${dados.atendente || 'Não informado'}\n` +
     `A Coutech Cell agradece a preferência!`;
 
   return mensagem;

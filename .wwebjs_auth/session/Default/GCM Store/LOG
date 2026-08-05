@@ -1,3 +1,2 @@
-2026/08/03-14:59:58.341 1130 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\GCM Store/MANIFEST-000001
-2026/08/03-14:59:58.341 1130 Recovering log #3
-2026/08/03-14:59:58.341 1130 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\GCM Store/000003.log 
+2026/08/05-08:55:03.910 1c58 Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\GCM Store since it was missing.
+2026/08/05-08:55:03.937 1c58 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\GCM Store/MANIFEST-000001
