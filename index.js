@@ -214,6 +214,7 @@ function prepararPesquisa(texto) {
 
     // Placa de carga
 	pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
+	pesquisa = pesquisa.replace(/\bdock\b/g, "flex de carga");
 
     // Se não informou o tipo da peça, assume tela
     const tipos = [
