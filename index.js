@@ -213,9 +213,10 @@ function prepararPesquisa(texto) {
 	pesquisa = pesquisa.replace(/\bnacional\b/g, "nac");
 
     // Placa de carga
-	pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
-	pesquisa = pesquisa.replace(/\bdock iphone\b/g, "flex de carga");
+	
 	pesquisa = pesquisa.replace(/\bdock de carga iphone\b/g, "flex de carga");	
+	pesquisa = pesquisa.replace(/\bdock iphone\b/g, "flex de carga");
+	pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
 
     // Se não informou o tipo da peça, assume tela
     const tipos = [
