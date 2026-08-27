@@ -2058,9 +2058,11 @@ app.get('/financeiro', async (req, res) => {
         `);
 
         let linhasClientes = '';
+		let montanteTotal = 0;
 
         for (const cliente of clientes) {
             const saldo = Number(cliente.saldo || 0);
+			montanteTotal += saldo;
 
             const classeSaldo =
                 saldo > 0
@@ -2302,6 +2304,24 @@ app.get('/financeiro', async (req, res) => {
                 flex-direction: column;
             }
         }
+		
+		.montante-total {
+			display: flex;
+			justify-content: flex-end;
+			align-items: center;
+			gap: 15px;
+			margin-top: 22px;
+			padding: 18px;
+			border-radius: 8px;
+			background: #263544;
+			color: white;
+			font-size: 20px;
+		}
+
+		.montante-total strong {
+			color: #5ee89c;
+			font-size: 25px;
+		}
     </style>
 </head>
 
@@ -2349,6 +2369,13 @@ app.get('/financeiro', async (req, res) => {
                     }
                 </tbody>
             </table>
+			<div class="montante-total">
+				<span>Montante total a receber:</span>
+
+				<strong>
+					R$ ${formatarValorConta(montanteTotal)}
+				</strong>
+			</div>
         </div>
     </div>
 </body>
