@@ -225,6 +225,8 @@ function prepararPesquisa(texto) {
         "placa de carga",
         "flex",
 		"tampa",
+		"cola",
+		"chave",
 		"conector"
     ];
 
@@ -244,6 +246,8 @@ function pesquisaValida(pesquisa) {
         "placa de carga",
         "flex",
 		"tampa",
+		"cola",
+		"chave",
 		"conector"
     ];
 
