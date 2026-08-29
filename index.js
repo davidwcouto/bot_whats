@@ -227,6 +227,7 @@ function prepararPesquisa(texto) {
 		"tampa",
 		"cola",
 		"chave",
+		"luva",
 		"conector"
     ];
 
@@ -248,6 +249,7 @@ function pesquisaValida(pesquisa) {
 		"tampa",
 		"cola",
 		"chave",
+		"luva",
 		"conector"
     ];
 
