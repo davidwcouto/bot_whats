@@ -3693,12 +3693,50 @@ app.get(
 
                 <section>
                     <h2>Adicionar entrega</h2>
+					
+					<div style="margin-bottom: 20px;">
+						<label for="textoPedidoWord">
+							Colar pedido do Word
+						</label>
+
+						<textarea
+							id="textoPedidoWord"
+							rows="12"
+							placeholder="Cole aqui o pedido completo copiado do Word..."
+							style="
+								width: 100%;
+								padding: 12px;
+								border: 1px solid #555;
+								border-radius: 8px;
+								background: #303030;
+								color: white;
+								font-family: Arial, sans-serif;
+								font-size: 16px;
+								resize: vertical;
+							"
+						></textarea>
+
+						<button
+							type="button"
+							id="preencherPedidoWord"
+							style="margin-top: 10px;"
+						>
+							Preencher dados do pedido
+						</button>
+
+						<p
+							id="resultadoLeituraWord"
+							class="aviso"
+							role="status"
+						></p>
+					</div>
 
                     <form
-                        class="grade"
-                        method="post"
-                        action="/entregas/painel"
-                    >
+						id="formAdicionarEntrega"
+						class="grade"
+						method="post"
+						action="/entregas/painel"
+					>
                         ${csrfEntregaCampo()}
 
                         <input
@@ -3816,6 +3854,133 @@ app.get(
                         Abrir conferência desta data
                     </a>
                 </p>
+				<script>
+				(function () {
+					const botao = document.getElementById('preencherPedidoWord');
+					const textoPedido = document.getElementById('textoPedidoWord');
+					const resultado = document.getElementById('resultadoLeituraWord');
+					const formulario = document.getElementById('formAdicionarEntrega');
+
+					function normalizarRotulo(texto) {
+						return texto
+							.normalize('NFD')
+							.replace(/[\\u0300-\\u036f]/g, '')
+							.toLowerCase()
+							.replace(/[^a-z0-9]/g, '');
+					}
+
+					botao.addEventListener('click', function () {
+						const texto = textoPedido.value
+							.replace(/\\u00a0/g, ' ')
+							.trim();
+
+						if (!texto) {
+							resultado.textContent =
+								'Cole o pedido do Word antes de preencher.';
+							return;
+						}
+
+						const linhas = texto.split(/\\r\\n|\\n|\\r/);
+						const dados = {};
+						let numeroPedido = '';
+						let quantidadePedidos = 0;
+
+						for (const linhaOriginal of linhas) {
+							const linha = linhaOriginal.trim();
+
+							const pedidoEncontrado = linha.match(
+								/^Pedido\\s*(?:N[º°o.]*)?\\s*[:#-]?\\s*(\\d+)\\s*$/i
+							);
+
+							if (pedidoEncontrado) {
+								numeroPedido = pedidoEncontrado[1];
+								quantidadePedidos++;
+								continue;
+							}
+
+							const separador = linha.indexOf(':');
+
+							if (separador < 0) {
+								continue;
+							}
+
+							const rotulo = normalizarRotulo(
+								linha.slice(0, separador)
+							);
+
+							const valor = linha.slice(separador + 1).trim();
+
+							dados[rotulo] = valor;
+						}
+
+						if (quantidadePedidos > 1) {
+							resultado.textContent =
+								'Cole apenas um pedido por vez.';
+							return;
+						}
+
+						const campos = {
+							pedido: numeroPedido,
+							cliente: dados.cliente || '',
+							telefone: dados.telefone || '',
+							endereco: dados.endereco || '',
+							cidade: dados.cidade || '',
+							total: (dados.total || '')
+								.replace(/^R\\$\\s*/i, '')
+								.trim()
+						};
+
+						const reconheceuPedido = Object.values(campos).some(
+							function (valor) {
+								return valor !== '';
+							}
+						);
+
+						if (!reconheceuPedido) {
+							resultado.textContent =
+								'Não reconheci os dados. Confira se o texto contém ' +
+								'Cliente:, Endereço: e Total:.';
+							return;
+						}
+
+						// Substitui os dados do cliente anterior, inclusive
+						// limpando os campos que não aparecem no novo texto.
+						// Preserva o horário e o motoboy escolhidos.
+						Object.entries(campos).forEach(function (entrada) {
+							formulario.elements.namedItem(entrada[0]).value =
+								entrada[1];
+						});
+
+						const faltantes = [];
+
+						if (!campos.cliente) faltantes.push('cliente');
+						if (!campos.endereco) faltantes.push('endereço');
+						if (!campos.total) faltantes.push('total');
+
+						let mensagem = faltantes.length
+							? 'Confira e complete: ' + faltantes.join(', ') + '.'
+							: 'Dados preenchidos. Confira o valor, escolha o horário ' +
+							  'e o motoboy e clique em Adicionar à rota.';
+
+						const situacaoPagamento = normalizarRotulo(
+							dados.estapago || ''
+						);
+
+						if (situacaoPagamento === 'sim') {
+							// Impede que o valor já pago seja cobrado novamente
+							// sem que você revise a situação.
+							formulario.elements.namedItem('total').value = '';
+
+							mensagem =
+								'ATENÇÃO: este pedido está marcado como já pago. ' +
+								'O valor a cobrar foi deixado em branco. ' +
+								'O sistema atual ainda não possui a opção Já pago.';
+						}
+
+						resultado.textContent = mensagem;
+					});
+				})();
+				</script>
             `));
         } catch (erro) {
             console.error('Erro no painel de entregas:', erro);
