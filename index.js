@@ -3856,10 +3856,93 @@ app.get(
                 </p>
 				<script>
 				(function () {
-					const botao = document.getElementById('preencherPedidoWord');
 					const textoPedido = document.getElementById('textoPedidoWord');
 					const resultado = document.getElementById('resultadoLeituraWord');
 					const formulario = document.getElementById('formAdicionarEntrega');
+					const botaoPreencher = document.getElementById('preencherPedidoWord');
+
+					if (!textoPedido || !resultado || !formulario) {
+						return;
+					}
+
+					const horario = formulario.elements.namedItem('horario_rota');
+					const motoboy = formulario.elements.namedItem('motoboy');
+
+					// Mantém visíveis apenas horário e motoboy.
+					// Os demais campos continuam no formulário para envio ao servidor.
+					Array.from(formulario.children).forEach(function (elemento) {
+						if (
+							elemento.tagName === 'DIV' &&
+							!elemento.contains(horario) &&
+							!elemento.contains(motoboy)
+						) {
+							elemento.hidden = true;
+						}
+					});
+
+					if (botaoPreencher) {
+						botaoPreencher.hidden = true;
+					}
+
+					// Coloca horário e motoboy antes do campo de colagem.
+					const areaColagem = textoPedido.parentElement;
+
+					areaColagem.parentElement.insertBefore(
+						formulario,
+						areaColagem
+					);
+
+					formulario.style.marginBottom = '20px';
+
+					textoPedido.placeholder =
+						'Selecione horário e motoboy acima e cole um pedido aqui. ' +
+						'Ele será cadastrado automaticamente.';
+
+					resultado.textContent =
+						'Selecione horário e motoboy antes de colar. ' +
+						'Cole apenas um pedido por vez.';
+
+					// Preserva a seleção nesta aba depois do cadastro.
+					const chaveSelecao = 'coutech_selecao_entregas';
+
+					try {
+						const selecao = JSON.parse(
+							sessionStorage.getItem(chaveSelecao) || 'null'
+						);
+
+						if (selecao) {
+							const horarioExiste = Array.from(horario.options).some(
+								function (opcao) {
+									return opcao.value === selecao.horario;
+								}
+							);
+
+							if (horarioExiste) {
+								horario.value = selecao.horario;
+							}
+
+							motoboy.value = selecao.motoboy || '';
+						}
+					} catch (erro) {
+						// O cadastro continua funcionando sem armazenamento local.
+					}
+
+					function guardarSelecao() {
+						try {
+							sessionStorage.setItem(
+								chaveSelecao,
+								JSON.stringify({
+									horario: horario.value,
+									motoboy: motoboy.value.trim()
+								})
+							);
+						} catch (erro) {
+							// O cadastro continua funcionando normalmente.
+						}
+					}
+
+					horario.addEventListener('change', guardarSelecao);
+					motoboy.addEventListener('input', guardarSelecao);
 
 					function normalizarRotulo(texto) {
 						return texto
@@ -3869,14 +3952,45 @@ app.get(
 							.replace(/[^a-z0-9]/g, '');
 					}
 
-					botao.addEventListener('click', function () {
-						const texto = textoPedido.value
+					function valorValido(texto) {
+						return (
+							/^(?:\\d+|\\d{1,3}(?:\\.\\d{3})+)(?:,\\d{1,2})?$/.test(texto) ||
+							/^\\d+\\.\\d{1,2}$/.test(texto)
+						);
+					}
+
+					let enviando = false;
+
+					// Evita envio acidental ao apertar Enter no campo motoboy.
+					formulario.addEventListener('submit', function (evento) {
+						evento.preventDefault();
+					});
+
+					textoPedido.addEventListener('paste', function (evento) {
+						evento.preventDefault();
+
+						if (enviando) {
+							return;
+						}
+
+						const texto = evento.clipboardData
+							?.getData('text/plain')
 							.replace(/\\u00a0/g, ' ')
-							.trim();
+							.trim() || '';
+
+						textoPedido.value = texto;
+
+						if (!horario.value || !motoboy.value.trim()) {
+							resultado.textContent =
+								'Selecione o horário e informe o motoboy. ' +
+								'Depois cole o pedido novamente.';
+
+							motoboy.focus();
+							return;
+						}
 
 						if (!texto) {
-							resultado.textContent =
-								'Cole o pedido do Word antes de preencher.';
+							resultado.textContent = 'Nenhum texto encontrado para colar.';
 							return;
 						}
 
@@ -3908,14 +4022,13 @@ app.get(
 								linha.slice(0, separador)
 							);
 
-							const valor = linha.slice(separador + 1).trim();
-
-							dados[rotulo] = valor;
+							dados[rotulo] = linha.slice(separador + 1).trim();
 						}
 
-						if (quantidadePedidos > 1) {
+						if (quantidadePedidos !== 1) {
 							resultado.textContent =
-								'Cole apenas um pedido por vez.';
+								'Não cadastrei: cole um único pedido completo, ' +
+								'incluindo a linha Pedido Nº.';
 							return;
 						}
 
@@ -3930,54 +4043,70 @@ app.get(
 								.trim()
 						};
 
-						const reconheceuPedido = Object.values(campos).some(
-							function (valor) {
-								return valor !== '';
-							}
-						);
-
-						if (!reconheceuPedido) {
-							resultado.textContent =
-								'Não reconheci os dados. Confira se o texto contém ' +
-								'Cliente:, Endereço: e Total:.';
-							return;
-						}
-
-						// Substitui os dados do cliente anterior, inclusive
-						// limpando os campos que não aparecem no novo texto.
-						// Preserva o horário e o motoboy escolhidos.
-						Object.entries(campos).forEach(function (entrada) {
-							formulario.elements.namedItem(entrada[0]).value =
-								entrada[1];
-						});
-
 						const faltantes = [];
 
 						if (!campos.cliente) faltantes.push('cliente');
 						if (!campos.endereco) faltantes.push('endereço');
 						if (!campos.total) faltantes.push('total');
 
-						let mensagem = faltantes.length
-							? 'Confira e complete: ' + faltantes.join(', ') + '.'
-							: 'Dados preenchidos. Confira o valor, escolha o horário ' +
-							  'e o motoboy e clique em Adicionar à rota.';
+						if (faltantes.length) {
+							resultado.textContent =
+								'Não cadastrei: faltam ' +
+								faltantes.join(', ') +
+								'. Corrija o texto e cole novamente.';
+							return;
+						}
+
+						if (!valorValido(campos.total)) {
+							resultado.textContent =
+								'Não cadastrei: o total está inválido. ' +
+								'Use, por exemplo, Total: R$ 100,00.';
+							return;
+						}
 
 						const situacaoPagamento = normalizarRotulo(
 							dados.estapago || ''
 						);
 
 						if (situacaoPagamento === 'sim') {
-							// Impede que o valor já pago seja cobrado novamente
-							// sem que você revise a situação.
-							formulario.elements.namedItem('total').value = '';
-
-							mensagem =
-								'ATENÇÃO: este pedido está marcado como já pago. ' +
-								'O valor a cobrar foi deixado em branco. ' +
-								'O sistema atual ainda não possui a opção Já pago.';
+							resultado.textContent =
+								'Não cadastrei: este pedido já está pago. ' +
+								'Precisamos adicionar a opção Já pago ao sistema ' +
+								'para evitar uma nova cobrança.';
+							return;
 						}
 
-						resultado.textContent = mensagem;
+						Object.entries(campos).forEach(function (entrada) {
+							formulario.elements.namedItem(entrada[0]).value =
+								entrada[1];
+						});
+
+						// Verifica os dados antes de enviar, inclusive os campos ocultos.
+						const campoInvalido = Array.from(formulario.elements).find(
+							function (campo) {
+								return campo.willValidate && !campo.validity.valid;
+							}
+						);
+
+						if (campoInvalido) {
+							resultado.textContent =
+								'Não cadastrei: confira o campo ' +
+								campoInvalido.name +
+								' no texto e cole novamente.';
+							return;
+						}
+
+						guardarSelecao();
+
+						enviando = true;
+						textoPedido.readOnly = true;
+
+						resultado.textContent =
+							'Cadastrando pedido ' + numeroPedido + '...';
+
+						// Envia para a rota de cadastro que já existe.
+						// O servidor salva e retorna ao painel atualizado.
+						HTMLFormElement.prototype.submit.call(formulario);
 					});
 				})();
 				</script>
