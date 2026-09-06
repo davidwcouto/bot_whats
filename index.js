@@ -3812,8 +3812,8 @@ app.get(
                     </form>
                 </section>
 
-                <section>
-                    <h2>Entregas cadastradas</h2>
+                <section hidden>
+					<h2>Entregas cadastradas</h2>
 
                     <p class="aviso">
                         Use sempre o mesmo nome para o mesmo motoboy.
