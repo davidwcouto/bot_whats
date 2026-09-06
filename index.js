@@ -3755,7 +3755,6 @@ app.get(
                         <div>
 							<label>Motoboy</label>
 							<select name="motoboy" required>
-								<option value="">Selecione o motoboy</option>
 								<option value="Kaue">Kaue</option>
 								<option value="Fabricio">Fabricio</option>
 							</select>
