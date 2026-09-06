@@ -3753,13 +3753,13 @@ app.get(
                         </div>
 
                         <div>
-                            <label>Motoboy</label>
-                            <input
-                                name="motoboy"
-                                maxlength="100"
-                                required
-                            >
-                        </div>
+							<label>Motoboy</label>
+							<select name="motoboy" required>
+								<option value="">Selecione o motoboy</option>
+								<option value="Kaue">Kaue</option>
+								<option value="Fabricio">Fabricio</option>
+							</select>
+						</div>
 
                         <div>
                             <label>Número do pedido</label>
