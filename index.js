@@ -3305,6 +3305,7 @@ app.use('/entregas', async (req, res, next) => {
     try {
         await prepararTabelaEntregas();
 		await prepararColunaDinheiro();
+		await prepararColunaColeta();
 		next();
     } catch (erro) {
         console.error(
@@ -3874,6 +3875,8 @@ app.get(
 						action="/entregas/painel"
 					>
                         ${csrfEntregaCampo()}
+						
+						<input type="hidden" name="coletar" value="">
 
                         <input
                             type="hidden"
@@ -4181,6 +4184,7 @@ app.get(
 							telefone: dados.telefone || '',
 							endereco: dados.endereco || '',
 							cidade: dados.cidade || '',
+							coletar: dados.coletar || '',
 							total: (dados.total || '')
 								.replace(/^R\\$\\s*/i, '')
 								.trim()
@@ -4318,31 +4322,33 @@ app.post(
                 existentes[0]?.codigo_acesso || codigoGerado;
 
             await db.execute(`
-                INSERT INTO entregas_motoboy (
-                    data_rota,
-                    horario_rota,
-                    motoboy,
-                    codigo_acesso,
-                    pedido,
-                    cliente,
-                    telefone,
-                    endereco,
-                    cidade,
-                    total
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-                data,
-                horario,
-                motoboy,
-                codigo,
-                textoEntrega(req.body.pedido, 50) || null,
-                cliente,
-                textoEntrega(req.body.telefone, 30) || null,
-                endereco,
-                textoEntrega(req.body.cidade, 100) || null,
-                (centavos / 100).toFixed(2)
-            ]);
+				INSERT INTO entregas_motoboy (
+					data_rota,
+					horario_rota,
+					motoboy,
+					codigo_acesso,
+					pedido,
+					cliente,
+					telefone,
+					endereco,
+					cidade,
+					total,
+					coletar
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, [
+				data,
+				horario,
+				motoboy,
+				codigo,
+				textoEntrega(req.body.pedido, 50) || null,
+				cliente,
+				textoEntrega(req.body.telefone, 30) || null,
+				endereco,
+				textoEntrega(req.body.cidade, 100) || null,
+				(centavos / 100).toFixed(2),
+				textoEntrega(req.body.coletar, 2000) || null
+			]);
 
             res.redirect(303, `/entregas/painel?data=${data}`);
         } catch (erro) {
@@ -4866,7 +4872,8 @@ app.get(
 					motoboy,
 					pedido,
 					cliente,
-					total
+					total,
+					coletar
 				FROM entregas_motoboy
 				WHERE data_rota = ?
 				ORDER BY horario_rota, motoboy, id
@@ -4879,6 +4886,13 @@ app.get(
 					<td>${escaparHtml(e.pedido || '—')}</td>
 					<td>${escaparHtml(e.cliente)}</td>
 					<td>${moedaEntregas(e.total)}</td>
+					<td style="
+						min-width: 140px;
+						max-width: 280px;
+						white-space: pre-wrap;
+						overflow-wrap: anywhere;
+						color: ${e.coletar ? '#f1c40f' : '#aaa'};
+					">${escaparHtml(e.coletar || '—')}</td>
 					<td>
 						<form
 							method="post"
@@ -4984,6 +4998,7 @@ app.get(
 									<th>Pedido</th>
 									<th>Cliente</th>
 									<th>Valor</th>
+									<th>Coletar</th>
 									<th>Ação</th>
 								</tr>
 							</thead>
@@ -4991,7 +5006,7 @@ app.get(
 							<tbody>
 								${linhasPedidosConferencia || `
 									<tr>
-										<td colspan="6">
+										<td colspan="7">
 											Nenhuma entrega nesta data.
 										</td>
 									</tr>
@@ -5204,6 +5219,42 @@ function prepararColunaDinheiro() {
     }
 
     return colunaDinheiroPronta;
+}
+
+let colunaColetaPronta = null;
+
+function prepararColunaColeta() {
+    if (!colunaColetaPronta) {
+        colunaColetaPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'coletar'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN coletar TEXT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaColetaPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaColetaPronta;
 }
 
 app.get("/health", (req, res) => {
