@@ -4551,6 +4551,51 @@ app.get(
                     <td>${moedaEntregas(r.nao_entregue)}</td>
                 </tr>
             `).join('');
+			
+			const [pedidosConferencia] = await db.execute(`
+				SELECT
+					id,
+					horario_rota,
+					motoboy,
+					pedido,
+					cliente,
+					total
+				FROM entregas_motoboy
+				WHERE data_rota = ?
+				ORDER BY horario_rota, motoboy, id
+			`, [data]);
+
+			const linhasPedidosConferencia = pedidosConferencia.map(e => `
+				<tr>
+					<td>${escaparHtml(e.horario_rota)}</td>
+					<td>${escaparHtml(e.motoboy)}</td>
+					<td>${escaparHtml(e.pedido || '—')}</td>
+					<td>${escaparHtml(e.cliente)}</td>
+					<td>${moedaEntregas(e.total)}</td>
+					<td>
+						<form
+							method="post"
+							action="/entregas/${e.id}/excluir"
+							onsubmit="return confirm('Excluir esta entrega definitivamente? Ela também será removida dos totais da conferência.');"
+						>
+							${csrfEntregaCampo()}
+
+							<input
+								type="hidden"
+								name="data"
+								value="${data}"
+							>
+
+							<button
+								type="submit"
+								style="background: #c62828; color: white;"
+							>
+								Excluir entrega
+							</button>
+						</form>
+					</td>
+				</tr>
+			`).join('');
 
             res.send(paginaEntregas('Conferência de entregas', `
                 <section>
@@ -4601,6 +4646,35 @@ app.get(
                         sem descontar despesas ou fundo de troco.
                     </p>
                 </section>
+				
+				<section>
+					<h2>Gerenciar entregas</h2>
+
+					<div class="tabela">
+						<table>
+							<thead>
+								<tr>
+									<th>Rota</th>
+									<th>Motoboy</th>
+									<th>Pedido</th>
+									<th>Cliente</th>
+									<th>Valor</th>
+									<th>Ação</th>
+								</tr>
+							</thead>
+
+							<tbody>
+								${linhasPedidosConferencia || `
+									<tr>
+										<td colspan="6">
+											Nenhuma entrega nesta data.
+										</td>
+									</tr>
+								`}
+							</tbody>
+						</table>
+					</div>
+				</section>
 
                 <p>
                     <a href="/entregas/painel?data=${data}">
@@ -4611,6 +4685,49 @@ app.get(
         } catch (erro) {
             console.error('Erro na conferência de entregas:', erro);
             res.status(500).send('Não foi possível abrir a conferência.');
+        }
+    }
+);
+
+// ======================================================
+// EXCLUIR ENTREGA — SOMENTE ADMINISTRADOR
+// ======================================================
+
+app.post(
+    '/entregas/:id/excluir',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const id = String(req.params.id || '');
+        const data = String(req.body.data || '');
+
+        if (!/^\d+$/.test(id) || !dataValidaEntregas(data)) {
+            return res.status(400).send('Dados inválidos.');
+        }
+
+        try {
+            const [resultado] = await db.execute(`
+                DELETE FROM entregas_motoboy
+                WHERE id = ?
+                  AND data_rota = ?
+            `, [id, data]);
+
+            if (!resultado.affectedRows) {
+                return res.status(404).send(
+                    'Entrega não encontrada ou já excluída.'
+                );
+            }
+
+            res.redirect(
+                303,
+                '/entregas/conferencia?data=' + encodeURIComponent(data)
+            );
+        } catch (erro) {
+            console.error('Erro ao excluir entrega:', erro);
+
+            res.status(500).send(
+                'Não foi possível excluir a entrega.'
+            );
         }
     }
 );
