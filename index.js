@@ -3693,39 +3693,66 @@ app.get(
 				gruposMotoboys.get(codigo).quantidade++;
 			}
 
-			const resumoMotoboys = Array.from(gruposMotoboys.values())
-				.map(motoboy => `
-					<article>
-						<h2>${escaparHtml(motoboy.nome)}</h2>
+			const rotasPorMotoboy = new Map();
 
-						<p>
-							Horário:
-							<strong>${escaparHtml(motoboy.horario)}</strong>
-						</p>
+			for (const rota of gruposMotoboys.values()) {
+				if (!rotasPorMotoboy.has(rota.nome)) {
+					rotasPorMotoboy.set(rota.nome, []);
+				}
 
-						<p>
-							<strong>${motoboy.quantidade}</strong>
-							${motoboy.quantidade === 1 ? 'entrega' : 'entregas'}
-						</p>
+				rotasPorMotoboy.get(rota.nome).push(rota);
+			}
 
-						<div class="botoes">
-							<a
-								href="/entregas/motoboy/${encodeURIComponent(motoboy.codigo)}"
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								Abrir rota
-							</a>
+			const resumoMotoboys = Array.from(rotasPorMotoboy.entries())
+				.map(([nome, rotas]) => `
+					<div style="margin-bottom: 24px;">
+						<h2>${escaparHtml(nome)}</h2>
 
-							<button
-								type="button"
-								class="copiar-link-motoboy"
-								data-caminho="/entregas/motoboy/${encodeURIComponent(motoboy.codigo)}"
-							>
-								Copiar link para enviar
-							</button>
+						<div style="
+							display: grid;
+							grid-template-columns:
+								repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+							gap: 14px;
+						">
+							${rotas
+								.sort((a, b) => a.horario.localeCompare(b.horario))
+								.map(rota => `
+									<article style="margin: 0; min-width: 0;">
+										<h3 style="margin-top: 0;">
+											Rota ${escaparHtml(rota.horario)}
+										</h3>
+
+										<p>
+											<strong>${rota.quantidade}</strong>
+											${
+												rota.quantidade === 1
+													? 'entrega'
+													: 'entregas'
+											}
+										</p>
+
+										<div class="botoes">
+											<a
+												href="/entregas/motoboy/${encodeURIComponent(rota.codigo)}"
+												target="_blank"
+												rel="noopener noreferrer"
+											>
+												Abrir rota
+											</a>
+
+											<button
+												type="button"
+												class="copiar-link-motoboy"
+												data-caminho="/entregas/motoboy/${encodeURIComponent(rota.codigo)}"
+											>
+												Copiar link para enviar
+											</button>
+										</div>
+									</article>
+								`)
+								.join('')}
 						</div>
-					</article>
+					</div>
 				`)
 				.join('');
 
