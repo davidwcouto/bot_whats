@@ -4402,7 +4402,9 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 
                 <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
 				
-                <h2>Peças pra coletar: ${escaparHtml(e.coletar)}</h2>				
+				${e.coletar ? `
+					<h2>Peças pra coletar: ${escaparHtml(e.coletar)}</h2>
+				` : ''}
 				
 				${e.forma_pagamento === 'dinheiro' ? `
 					<p style="color: #4ade80; font-weight: bold;">
