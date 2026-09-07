@@ -4650,7 +4650,26 @@ app.get(
 				<section>
 					<h2>Gerenciar entregas</h2>
 
-					<div class="tabela">
+					<style>
+						.tabela-gerenciar-entregas th,
+						.tabela-gerenciar-entregas td {
+							padding: 5px 8px;
+							font-size: 14px;
+						}
+
+						.tabela-gerenciar-entregas form {
+							margin: 0;
+						}
+
+						.tabela-gerenciar-entregas button {
+							width: auto;
+							padding: 5px 10px;
+							font-size: 13px;
+							border-radius: 5px;
+						}
+					</style>
+
+					<div class="tabela tabela-gerenciar-entregas">
 						<table>
 							<thead>
 								<tr>
