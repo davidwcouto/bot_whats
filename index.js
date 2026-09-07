@@ -3610,6 +3610,61 @@ function paginaEntregas(titulo, conteudo) {
                 grid-template-columns: 1fr;
             }
         }
+		
+		/* Impede o conteúdo de ultrapassar o cartão */
+		article {
+			min-width: 0;
+			overflow-wrap: anywhere;
+		}
+
+		article form.botoes {
+			width: 100%;
+			min-width: 0;
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		article form.botoes > * {
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		article input,
+		article button {
+			box-sizing: border-box;
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		article button {
+			white-space: normal;
+			overflow-wrap: anywhere;
+		}
+
+		/* Ajustes para celular */
+		@media (max-width: 600px) {
+			article {
+				padding: 14px;
+			}
+
+			article h2 {
+				font-size: 20px;
+				line-height: 1.3;
+			}
+
+			article p {
+				font-size: 15px;
+				line-height: 1.4;
+			}
+
+			article button {
+				font-size: 15px;
+				min-height: 44px;
+			}
+
+			article input {
+				font-size: 16px;
+			}
+		}
     </style>
 </head>
 <body>
