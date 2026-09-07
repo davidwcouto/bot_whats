@@ -4950,8 +4950,6 @@ app.get(
                     <p class="aviso">
                         Os valores refletem as marcações dos motoboys.
                         Confira os PIX no banco.
-                        O dinheiro é o total registrado como recebido,
-                        sem descontar despesas ou fundo de troco.
                     </p>
                 </section>
 				
