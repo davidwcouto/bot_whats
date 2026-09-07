@@ -4893,6 +4893,7 @@ app.get(
 					<div style="
 						margin-bottom: 6px;
 						color: #f1c40f;
+						font-size: 10px;
 						white-space: pre-wrap;
 						overflow-wrap: anywhere;
 					">${escaparHtml(coleta.coletar)}</div>
