@@ -3784,7 +3784,7 @@ app.get(
 							rows="12"
 							placeholder="Cole aqui o pedido completo copiado do Word..."
 							style="
-								width: 100%;
+								width: 50%;
 								padding: 12px;
 								border: 1px solid #555;
 								border-radius: 8px;
