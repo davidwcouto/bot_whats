@@ -4847,6 +4847,57 @@ app.get(
 					</div>
 				`;
 			}
+			
+			const [coletasDaData] = await db.execute(`
+				SELECT
+					horario_rota,
+					motoboy,
+					pedido,
+					cliente,
+					coletar
+				FROM entregas_motoboy
+				WHERE data_rota = ?
+				  AND coletar IS NOT NULL
+				  AND TRIM(coletar) <> ''
+				ORDER BY horario_rota, motoboy, id
+			`, [data]);
+
+			const coletasPorRota = new Map();
+
+			for (const coleta of coletasDaData) {
+				const chave = JSON.stringify([
+					coleta.horario_rota,
+					coleta.motoboy
+				]);
+
+				if (!coletasPorRota.has(chave)) {
+					coletasPorRota.set(chave, []);
+				}
+
+				coletasPorRota.get(chave).push(coleta);
+			}
+
+			function mostrarColetasResumo(rota) {
+				const chave = JSON.stringify([
+					rota.horario_rota,
+					rota.motoboy
+				]);
+
+				const coletas = coletasPorRota.get(chave) || [];
+
+				if (!coletas.length) {
+					return '—';
+				}
+
+				return coletas.map(coleta => `
+					<div style="
+						margin-bottom: 6px;
+						color: #f1c40f;
+						white-space: pre-wrap;
+						overflow-wrap: anywhere;
+					">${escaparHtml(coleta.coletar)}</div>
+				`).join('');
+			}
 
             const linhas = resumo.map(r => `
                 <tr>
@@ -4865,6 +4916,9 @@ app.get(
 						${moedaEntregas(r.pendente)}
 					</td>
                     <td>${moedaEntregas(r.nao_entregue)}</td>
+					<td style="min-width: 180px; max-width: 300px;">
+						${mostrarColetasResumo(r)}
+					</td>
 					<td>${botoesConferencia(r)}</td>
                 </tr>
             `).join('');
@@ -4949,6 +5003,7 @@ app.get(
                                     <th>Dinheiro a trazer</th>
                                     <th>Sem marcação</th>
                                     <th>Não entregue</th>
+									<th>Coletas</th>
 									<th>Conferência</th>
                                 </tr>
                             </thead>
@@ -4956,7 +5011,7 @@ app.get(
                             <tbody>
                                 ${linhas || `
                                     <tr>
-                                        <td colspan="8">
+                                        <td colspan="9">
                                             Nenhuma entrega nesta data.
                                         </td>
                                     </tr>
