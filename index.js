@@ -4405,27 +4405,43 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 							Valor recebido em dinheiro
 						</label>
 
-						<input
-							id="valor-dinheiro-${e.id}"
-							name="valor_dinheiro"
-							type="text"
-							inputmode="decimal"
-							placeholder="Ex.: 120,00"
-							autocomplete="off"
-						>
+						<div style="
+							display: flex;
+							align-items: stretch;
+							gap: 10px;
+						">
+							<input
+								id="valor-dinheiro-${e.id}"
+								name="valor_dinheiro"
+								type="text"
+								inputmode="decimal"
+								placeholder="Ex.: 120,00"
+								autocomplete="off"
+								style="
+									flex: 1;
+									min-width: 0;
+									width: auto;
+								"
+							>
+
+							<button
+								name="acao"
+								value="dinheiro_personalizado"
+								class="dinheiro"
+								style="
+									width: auto;
+									flex-shrink: 0;
+									padding: 12px 16px;
+								"
+							>
+								Entregue
+							</button>
+						</div>
 
 						<p class="aviso" style="font-size: 13px;">
 							Informe o valor que ficou com você,
 							descontando o troco devolvido.
 						</p>
-
-						<button
-							name="acao"
-							value="dinheiro_personalizado"
-							class="dinheiro"
-						>
-							Entregue — salvar valor informado
-						</button>
 					</div>
 
                     <button
