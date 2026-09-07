@@ -3797,13 +3797,28 @@ app.get(
 												Abrir rota
 											</a>
 
-											<button
-												type="button"
-												class="copiar-link-motoboy"
-												data-caminho="/entregas/motoboy/${encodeURIComponent(rota.codigo)}"
+											<form
+												method="post"
+												action="/entregas/enviar-rota"
+												style="margin: 0;"
+												onsubmit="
+													const botao = this.querySelector('button');
+													botao.disabled = true;
+													botao.textContent = 'Enviando...';
+												"
 											>
-												Copiar link para enviar
-											</button>
+												${csrfEntregaCampo()}
+
+												<input
+													type="hidden"
+													name="codigo"
+													value="${escaparHtml(rota.codigo)}"
+												>
+
+												<button type="submit">
+													Enviar rota no WhatsApp
+												</button>
+											</form>
 										</div>
 									</article>
 								`)
@@ -5329,6 +5344,178 @@ function prepararColunaColeta() {
 
     return colunaColetaPronta;
 }
+
+// ======================================================
+// ENVIAR ROTA AO WHATSAPP DO MOTOBOY
+// ======================================================
+
+const telefonesMotoboys = new Map([
+    ['fabricio', '555181056096'],
+    ['kaue', '555195891400']
+]);
+
+const enviosRotasEmAndamento = new Set();
+
+app.post(
+    '/entregas/enviar-rota',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const codigo = String(req.body.codigo || '');
+
+        if (!/^[a-f0-9-]{36}$/.test(codigo)) {
+            return res.status(400).send('Código de rota inválido.');
+        }
+
+        if (enviosRotasEmAndamento.has(codigo)) {
+            return res.status(409).send(
+                'Esta rota já está sendo enviada. Aguarde.'
+            );
+        }
+
+        enviosRotasEmAndamento.add(codigo);
+
+        try {
+            const [entregas] = await db.execute(`
+                SELECT
+                    motoboy,
+                    horario_rota,
+                    DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS data_painel
+                FROM entregas_motoboy
+                WHERE codigo_acesso = ?
+                ORDER BY id
+            `, [codigo]);
+
+            if (!entregas.length) {
+                return res.status(404).send(
+                    'Esta rota não possui entregas.'
+                );
+            }
+
+            const rota = entregas[0];
+
+            // Confirma que o link pertence a uma única rota.
+            const rotaInconsistente = entregas.some(e =>
+                e.motoboy !== rota.motoboy ||
+                e.horario_rota !== rota.horario_rota ||
+                e.data_painel !== rota.data_painel
+            );
+
+            if (rotaInconsistente) {
+                return res.status(409).send(
+                    'O link está associado a rotas diferentes. ' +
+                    'Confira os cadastros antes de enviar.'
+                );
+            }
+
+            const nomeNormalizado = rota.motoboy
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .trim()
+                .toLowerCase();
+
+            const telefone = telefonesMotoboys.get(nomeNormalizado);
+
+            if (!telefone) {
+                return res.status(400).send(
+                    'Não existe telefone configurado para este motoboy.'
+                );
+            }
+
+            const enderecoConfigurado =
+                String(process.env.URL_PUBLICA_BOT || '').trim();
+
+            let enderecoBase;
+
+            try {
+                enderecoBase = new URL(enderecoConfigurado);
+
+                if (
+                    enderecoBase.protocol !== 'https:' ||
+                    enderecoBase.username ||
+                    enderecoBase.password
+                ) {
+                    throw new Error('Endereço inválido');
+                }
+            } catch (erro) {
+                return res.status(503).send(
+                    'Configure URL_PUBLICA_BOT no Railway ' +
+                    'com o endereço HTTPS do seu bot.'
+                );
+            }
+
+            if (!client.info) {
+                return res.status(503).send(
+                    'O WhatsApp do bot ainda não está conectado.'
+                );
+            }
+
+            const destinatario = await client.getNumberId(telefone);
+
+            if (!destinatario) {
+                return res.status(400).send(
+                    'O número informado para este motoboy ' +
+                    'não foi encontrado no WhatsApp. Confira o cadastro.'
+                );
+            }
+
+            const link = new URL(
+                '/entregas/motoboy/' + encodeURIComponent(codigo),
+                enderecoBase.origin
+            ).href;
+
+            const mensagem = [
+                `🛵 *Sua rota de entregas — ${rota.motoboy}*`,
+                '',
+                `📅 Data: ${rota.data_formatada}`,
+                `⏰ Saída: ${rota.horario_rota}`,
+                `📦 Entregas: ${entregas.length}`,
+                '',
+                'Abra o link para visualizar os clientes e registrar os pagamentos:',
+                link
+            ].join('\n');
+
+            await client.sendMessage(
+                destinatario._serialized,
+                mensagem
+            );
+
+            console.log(
+                `✅ Rota ${rota.horario_rota} enviada para ${rota.motoboy}.`
+            );
+
+            return res.send(
+                paginaEntregas('Rota enviada', `
+                    <section>
+                        <p>
+                            Mensagem enviada para
+                            <strong>${escaparHtml(rota.motoboy)}</strong>.
+                        </p>
+
+                        <p>
+                            Rota das ${escaparHtml(rota.horario_rota)}
+                            de ${escaparHtml(rota.data_formatada)}.
+                        </p>
+
+                        <a href="/entregas/painel?data=${encodeURIComponent(rota.data_painel)}">
+                            Voltar ao painel
+                        </a>
+                    </section>
+                `)
+            );
+        } catch (erro) {
+            console.error('Erro ao enviar rota pelo WhatsApp:', erro);
+
+            return res.status(500).send(
+                'Não foi possível confirmar o envio. ' +
+                'Confira a conversa no WhatsApp antes de tentar novamente.'
+            );
+        } finally {
+            enviosRotasEmAndamento.delete(codigo);
+        }
+    }
+);
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
