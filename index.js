@@ -3781,10 +3781,10 @@ app.get(
 
 						<textarea
 							id="textoPedidoWord"
-							rows="12"
+							rows="3"
 							placeholder="Cole aqui o pedido completo copiado do Word..."
 							style="
-								width: 50%;
+								width: 100%;
 								padding: 12px;
 								border: 1px solid #555;
 								border-radius: 8px;
