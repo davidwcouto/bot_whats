@@ -4437,11 +4437,6 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 								Entregue
 							</button>
 						</div>
-
-						<p class="aviso" style="font-size: 13px;">
-							Informe o valor que ficou com você,
-							descontando o troco devolvido.
-						</p>
 					</div>
 
                     <button
