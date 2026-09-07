@@ -4541,7 +4541,13 @@ app.get(
                     <td>
                         <strong>${moedaEntregas(r.dinheiro)}</strong>
                     </td>
-                    <td>${moedaEntregas(r.pendente)}</td>
+                    <td style="${
+						Number(r.pendente) > 0
+							? 'color: #ff4d4f; font-weight: bold;'
+							: ''
+					}">
+						${moedaEntregas(r.pendente)}
+					</td>
                     <td>${moedaEntregas(r.nao_entregue)}</td>
                 </tr>
             `).join('');
