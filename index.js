@@ -4901,7 +4901,7 @@ app.get(
 								font-size: 14px;
 								overflow-wrap: anywhere;
 								min-width: 0;
-							">${escaparHtml(coleta.coletar)}</span>
+							">${escaparHtml(coleta.coletar " - ")}</span>
 						`).join('')}
 					</div>
 				`;
