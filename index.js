@@ -4531,6 +4531,119 @@ app.get(
                 GROUP BY horario_rota, motoboy
                 ORDER BY horario_rota, motoboy
             `, [data]);
+			
+			await prepararTabelaConferencia();
+
+			const [conferenciasSalvas] = await db.execute(`
+				SELECT horario_rota, motoboy, resultado
+				FROM conferencias_motoboy
+				WHERE data_rota = ?
+			`, [data]);
+
+			function chaveConferencia(horario, motoboy) {
+				return JSON.stringify([horario, motoboy]);
+			}
+
+			const resultadosConferencia = new Map(
+				conferenciasSalvas.map(c => [
+					chaveConferencia(c.horario_rota, c.motoboy),
+					c.resultado
+				])
+			);
+
+			function botoesConferencia(rota) {
+				const resultado = resultadosConferencia.get(
+					chaveConferencia(rota.horario_rota, rota.motoboy)
+				);
+
+				const texto = resultado === 'correta'
+					? '✓ Conferência correta'
+					: resultado === 'incorreta'
+						? '✕ Conferência incorreta'
+						: 'Ainda não conferida';
+
+				const cor = resultado === 'correta'
+					? '#4ade80'
+					: resultado === 'incorreta'
+						? '#ff4d4f'
+						: '#ccc';
+
+				return `
+					<div style="min-width: 190px;">
+						<p style="
+							margin: 0 0 8px;
+							color: ${cor};
+							font-weight: bold;
+						">
+							${texto}
+						</p>
+
+						<form
+							method="post"
+							action="/entregas/conferencia/resultado"
+							style="display: flex; gap: 6px; margin: 0;"
+						>
+							${csrfEntregaCampo()}
+
+							<input type="hidden" name="data" value="${data}">
+
+							<input
+								type="hidden"
+								name="horario"
+								value="${escaparHtml(rota.horario_rota)}"
+							>
+
+							<input
+								type="hidden"
+								name="motoboy"
+								value="${escaparHtml(rota.motoboy)}"
+							>
+
+							<button
+								type="submit"
+								name="resultado"
+								value="correta"
+								aria-pressed="${resultado === 'correta'}"
+								style="
+									width: auto;
+									padding: 6px 10px;
+									font-size: 13px;
+									background: #166534;
+									color: white;
+									border: 2px solid ${
+										resultado === 'correta'
+											? '#4ade80'
+											: 'transparent'
+									};
+								"
+							>
+								Correta
+							</button>
+
+							<button
+								type="submit"
+								name="resultado"
+								value="incorreta"
+								aria-pressed="${resultado === 'incorreta'}"
+								style="
+									width: auto;
+									padding: 6px 10px;
+									font-size: 13px;
+									background: #991b1b;
+									color: white;
+									border: 2px solid ${
+										resultado === 'incorreta'
+											? '#ff4d4f'
+											: 'transparent'
+									};
+								"
+							>
+								Incorreta
+							</button>
+						</form>
+					</div>
+				`;
+			}
 
             const linhas = resumo.map(r => `
                 <tr>
@@ -4549,6 +4662,7 @@ app.get(
 						${moedaEntregas(r.pendente)}
 					</td>
                     <td>${moedaEntregas(r.nao_entregue)}</td>
+					<td>${botoesConferencia(r)}</td>
                 </tr>
             `).join('');
 			
@@ -4624,13 +4738,14 @@ app.get(
                                     <th>Dinheiro a trazer</th>
                                     <th>Sem marcação</th>
                                     <th>Não entregue</th>
+									<th>Conferência</th>
                                 </tr>
                             </thead>
 
                             <tbody>
                                 ${linhas || `
                                     <tr>
-                                        <td colspan="7">
+                                        <td colspan="8">
                                             Nenhuma entrega nesta data.
                                         </td>
                                     </tr>
@@ -4746,6 +4861,113 @@ app.post(
 
             res.status(500).send(
                 'Não foi possível excluir a entrega.'
+            );
+        }
+    }
+);
+
+// ======================================================
+// RESULTADO DA CONFERÊNCIA POR ROTA
+// ======================================================
+
+let tabelaConferenciaPronta = null;
+
+function prepararTabelaConferencia() {
+    if (!tabelaConferenciaPronta) {
+        tabelaConferenciaPronta = db.execute(`
+            CREATE TABLE IF NOT EXISTS conferencias_motoboy (
+                data_rota DATE NOT NULL,
+                horario_rota VARCHAR(5) NOT NULL,
+                motoboy VARCHAR(100) NOT NULL,
+
+                resultado ENUM(
+                    'correta',
+                    'incorreta'
+                ) NOT NULL,
+
+                atualizado_em DATETIME NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    data_rota,
+                    horario_rota,
+                    motoboy
+                )
+            )
+        `).catch(erro => {
+            tabelaConferenciaPronta = null;
+            throw erro;
+        });
+    }
+
+    return tabelaConferenciaPronta;
+}
+
+app.post(
+    '/entregas/conferencia/resultado',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const data = String(req.body.data || '');
+        const horario = String(req.body.horario || '');
+        const motoboy = textoEntrega(req.body.motoboy, 100);
+        const resultado = String(req.body.resultado || '');
+
+        if (
+            !dataValidaEntregas(data) ||
+            !HORARIOS_ENTREGA.includes(horario) ||
+            !motoboy ||
+            !['correta', 'incorreta'].includes(resultado)
+        ) {
+            return res.status(400).send('Dados inválidos.');
+        }
+
+        try {
+            await prepararTabelaConferencia();
+
+            const [rotas] = await db.execute(`
+                SELECT id
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                  AND horario_rota = ?
+                  AND motoboy = ?
+                LIMIT 1
+            `, [data, horario, motoboy]);
+
+            if (!rotas.length) {
+                return res.status(404).send('Rota não encontrada.');
+            }
+
+            await db.execute(`
+                INSERT INTO conferencias_motoboy (
+                    data_rota,
+                    horario_rota,
+                    motoboy,
+                    resultado
+                )
+                VALUES (?, ?, ?, ?)
+
+                ON DUPLICATE KEY UPDATE
+                    resultado = ?,
+                    atualizado_em = CURRENT_TIMESTAMP
+            `, [
+                data,
+                horario,
+                motoboy,
+                resultado,
+                resultado
+            ]);
+
+            res.redirect(
+                303,
+                '/entregas/conferencia?data=' + encodeURIComponent(data)
+            );
+        } catch (erro) {
+            console.error('Erro ao salvar conferência:', erro);
+
+            res.status(500).send(
+                'Não foi possível salvar a conferência.'
             );
         }
     }
