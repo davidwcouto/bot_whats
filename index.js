@@ -3413,7 +3413,7 @@ function validarFormularioEntrega(req, res, next) {
 // Login do administrador.
 // Não coloca sua senha no endereço da página.
 function autenticarEntregas(req, res, next) {
-    const senhaConfigurada = process.env.SENHA_ENTREGAS;
+    const senhaConfigurada = process.env.SENHA_EXCLUSAO_ENTREGAS;
 
     if (!senhaConfigurada) {
         return res.status(503).send(
