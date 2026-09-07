@@ -3304,7 +3304,8 @@ app.use('/entregas', async (req, res, next) => {
 
     try {
         await prepararTabelaEntregas();
-        next();
+		await prepararColunaDinheiro();
+		next();
     } catch (erro) {
         console.error(
             'Erro ao preparar tabela de entregas:',
@@ -4338,7 +4339,16 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                     Telefone: ${escaparHtml(e.telefone || '—')}
                 </p>
 
-                <h2>${moedaEntregas(e.total)}</h2>
+                <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
+
+				${e.forma_pagamento === 'dinheiro' ? `
+					<p style="color: #4ade80; font-weight: bold;">
+						Recebido em dinheiro:
+						${moedaEntregas(
+							e.valor_recebido_dinheiro ?? e.total
+						)}
+					</p>
+				` : ''}
 
                 <p>
                     Entrega:
@@ -4385,6 +4395,38 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                     >
                         Entregue — recebi em dinheiro
                     </button>
+					
+					<div style="
+						padding: 12px;
+						border: 1px solid #666;
+						border-radius: 8px;
+					">
+						<label for="valor-dinheiro-${e.id}">
+							Valor recebido em dinheiro
+						</label>
+
+						<input
+							id="valor-dinheiro-${e.id}"
+							name="valor_dinheiro"
+							type="text"
+							inputmode="decimal"
+							placeholder="Ex.: 120,00"
+							autocomplete="off"
+						>
+
+						<p class="aviso" style="font-size: 13px;">
+							Informe o valor que ficou com você,
+							descontando o troco devolvido.
+						</p>
+
+						<button
+							name="acao"
+							value="dinheiro_personalizado"
+							class="dinheiro"
+						>
+							Entregue — salvar valor informado
+						</button>
+					</div>
 
                     <button
                         name="acao"
@@ -4443,6 +4485,7 @@ app.post(
         const acoes = {
             pix: ['entregue', 'pix'],
             dinheiro: ['entregue', 'dinheiro'],
+            dinheiro_personalizado: ['entregue', 'dinheiro'],
             nao_entregue: ['nao_entregue', 'pendente'],
             pendente: ['pendente', 'pendente']
         };
@@ -4455,32 +4498,115 @@ app.post(
             return res.status(400).send('Confirmação inválida.');
         }
 
-        const [status, pagamento] = acoes[acao];
+        let conexao;
 
         try {
-            // O código precisa pertencer à entrega.
-            // Um motoboy não consegue alterar outra rota só mudando o ID.
-            const [resultado] = await db.execute(`
-                UPDATE entregas_motoboy
-                SET status_entrega = ?,
-                    forma_pagamento = ?
+            conexao = await db.getConnection();
+            await conexao.beginTransaction();
+
+            const [entregas] = await conexao.execute(`
+                SELECT total
+                FROM entregas_motoboy
                 WHERE id = ?
                   AND codigo_acesso = ?
-            `, [status, pagamento, id, codigo]);
+                FOR UPDATE
+            `, [id, codigo]);
 
-            if (!resultado.affectedRows) {
-                return res.status(404).send('Entrega não encontrada.');
+            if (!entregas.length) {
+                await conexao.rollback();
+
+                return res.status(404).send(
+                    'Entrega não encontrada.'
+                );
             }
+
+            const totalCentavos = Math.round(
+                Number(entregas[0].total) * 100
+            );
+
+            let valorRecebido = null;
+
+            if (acao === 'dinheiro') {
+                // Botão original: recebe o valor exato do pedido.
+                valorRecebido = (totalCentavos / 100).toFixed(2);
+            }
+
+            if (acao === 'dinheiro_personalizado') {
+                const informado = centavosEntregas(
+                    req.body.valor_dinheiro
+                );
+
+                if (
+                    informado === null ||
+                    informado < totalCentavos
+                ) {
+                    await conexao.rollback();
+
+                    return res.status(400).send(
+                        paginaEntregas('Confira o valor recebido', `
+                            <section>
+                                <p>
+                                    Informe um valor válido, igual
+                                    ou maior que o valor do pedido:
+                                    ${moedaEntregas(entregas[0].total)}.
+                                </p>
+
+                                <a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+                                    Voltar à rota
+                                </a>
+                            </section>
+                        `)
+                    );
+                }
+
+                valorRecebido = (informado / 100).toFixed(2);
+            }
+
+            const [status, pagamento] = acoes[acao];
+
+            await conexao.execute(`
+                UPDATE entregas_motoboy
+                SET status_entrega = ?,
+                    forma_pagamento = ?,
+                    valor_recebido_dinheiro = ?
+                WHERE id = ?
+                  AND codigo_acesso = ?
+            `, [
+                status,
+                pagamento,
+                valorRecebido,
+                id,
+                codigo
+            ]);
+
+            await conexao.commit();
 
             res.redirect(
                 303,
-                `/entregas/motoboy/${encodeURIComponent(codigo)}`
+                '/entregas/motoboy/' + encodeURIComponent(codigo)
             );
         } catch (erro) {
+            if (conexao) {
+                try {
+                    await conexao.rollback();
+                } catch (erroRollback) {
+                    console.error(
+                        'Erro ao desfazer confirmação:',
+                        erroRollback
+                    );
+                }
+            }
+
             console.error('Erro ao confirmar entrega:', erro);
+
             res.status(500).send(
-                'Não foi possível salvar. Confira sua conexão e tente novamente.'
+                'Não foi possível salvar. Atualize a rota ' +
+                'para conferir a situação antes de tentar novamente.'
             );
+        } finally {
+            if (conexao) {
+                conexao.release();
+            }
         }
     }
 );
@@ -4512,9 +4638,10 @@ app.get(
                     ) AS pix,
 
                     SUM(
-                        CASE WHEN forma_pagamento = 'dinheiro'
-                        THEN total ELSE 0 END
-                    ) AS dinheiro,
+						CASE WHEN forma_pagamento = 'dinheiro'
+						THEN COALESCE(valor_recebido_dinheiro, total)
+						ELSE 0 END
+					) AS dinheiro,
 
                     SUM(
                         CASE WHEN status_entrega = 'pendente'
@@ -4972,6 +5099,48 @@ app.post(
         }
     }
 );
+
+// ======================================================
+// VALOR EFETIVAMENTE RECEBIDO EM DINHEIRO
+// ======================================================
+
+let colunaDinheiroPronta = null;
+
+function prepararColunaDinheiro() {
+    if (!colunaDinheiroPronta) {
+        colunaDinheiroPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'valor_recebido_dinheiro'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN valor_recebido_dinheiro
+                            DECIMAL(10,2) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    // Outra instância pode ter criado a coluna.
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaDinheiroPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaDinheiroPronta;
+}
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
