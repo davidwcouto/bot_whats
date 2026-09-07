@@ -4531,12 +4531,6 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                     · ${escaparHtml(rota.data_formatada)}
                 </p>
 
-                <p class="aviso">
-                    É necessário ter internet para salvar.
-                    A marcação de PIX é uma informação do entregador:
-                    a loja ainda precisa conferir o recebimento.
-                </p>
-
                 ${cards}
             `
         ));
