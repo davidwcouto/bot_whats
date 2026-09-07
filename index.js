@@ -4889,15 +4889,22 @@ app.get(
 					return '—';
 				}
 
-				return coletas.map(coleta => `
+				return `
 					<div style="
-						margin-bottom: 6px;
-						color: #f1c40f;
-						font-size: 13px;
-						white-space: pre-wrap;
-						overflow-wrap: anywhere;
-					">${escaparHtml(coleta.coletar)}</div>
-				`).join('');
+						display: flex;
+						flex-wrap: wrap;
+						gap: 6px 12px;
+					">
+						${coletas.map(coleta => `
+							<span style="
+								color: #f1c40f;
+								font-size: 14px;
+								overflow-wrap: anywhere;
+								min-width: 0;
+							">${escaparHtml(coleta.coletar)}</span>
+						`).join('')}
+					</div>
+				`;
 			}
 
             const linhas = resumo.map(r => `
