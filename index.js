@@ -3675,6 +3675,59 @@ app.get(
             const opcoesHorarios = HORARIOS_ENTREGA.map(h => `
                 <option value="${h}">${h}</option>
             `).join('');
+			
+			const gruposMotoboys = new Map();
+
+			for (const entrega of entregas) {
+				const codigo = entrega.codigo_acesso;
+
+				if (!gruposMotoboys.has(codigo)) {
+					gruposMotoboys.set(codigo, {
+						nome: entrega.motoboy,
+						horario: entrega.horario_rota,
+						codigo,
+						quantidade: 0
+					});
+				}
+
+				gruposMotoboys.get(codigo).quantidade++;
+			}
+
+			const resumoMotoboys = Array.from(gruposMotoboys.values())
+				.map(motoboy => `
+					<article>
+						<h2>${escaparHtml(motoboy.nome)}</h2>
+
+						<p>
+							Horário:
+							<strong>${escaparHtml(motoboy.horario)}</strong>
+						</p>
+
+						<p>
+							<strong>${motoboy.quantidade}</strong>
+							${motoboy.quantidade === 1 ? 'entrega' : 'entregas'}
+						</p>
+
+						<div class="botoes">
+							<a
+								href="/entregas/motoboy/${encodeURIComponent(motoboy.codigo)}"
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								Abrir rota
+							</a>
+
+							<button
+								type="button"
+								class="copiar-link-motoboy"
+								data-caminho="/entregas/motoboy/${encodeURIComponent(motoboy.codigo)}"
+							>
+								Copiar link para enviar
+							</button>
+						</div>
+					</article>
+				`)
+				.join('');
 
             res.send(paginaEntregas('Rotas de entrega', `
                 <section>
@@ -3812,41 +3865,49 @@ app.get(
                     </form>
                 </section>
 
-                <section hidden>
-					<h2>Entregas cadastradas</h2>
+                <section>
+					<h2>Rotas dos motoboys</h2>
 
-                    <p class="aviso">
-                        Use sempre o mesmo nome para o mesmo motoboy.
-                        Copie o endereço de “Abrir rota” para enviar
-                        ao entregador.
-                    </p>
+					<p class="aviso">
+						Entregas da data selecionada, separadas por motoboy e horário.
+					</p>
 
-                    <div class="tabela">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Horário</th>
-                                    <th>Motoboy</th>
-                                    <th>Pedido</th>
-                                    <th>Cliente</th>
-                                    <th>Valor</th>
-                                    <th>Entrega</th>
-                                    <th>Pagamento</th>
-                                    <th>Link</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${linhas || `
-                                    <tr>
-                                        <td colspan="8">
-                                            Nenhuma entrega nesta data.
-                                        </td>
-                                    </tr>
-                                `}
-                            </tbody>
-                        </table>
-                    </div>
-                </section>
+					${resumoMotoboys || `
+						<p>Nenhuma entrega cadastrada nesta data.</p>
+					`}
+				</section>
+				
+				<script>
+				(function () {
+					const botoes = document.querySelectorAll(
+						'.copiar-link-motoboy'
+					);
+
+					botoes.forEach(function (botao) {
+						botao.addEventListener('click', async function () {
+							const link = new URL(
+								botao.dataset.caminho,
+								window.location.origin
+							).href;
+
+							try {
+								await navigator.clipboard.writeText(link);
+
+								botao.textContent = 'Link copiado! Cole no WhatsApp.';
+
+								setTimeout(function () {
+									botao.textContent = 'Copiar link para enviar';
+								}, 3000);
+							} catch (erro) {
+								window.prompt(
+									'Copie este link e envie ao motoboy:',
+									link
+								);
+							}
+						});
+					});
+				})();
+				</script>
 
                 <p>
                     <a href="/entregas/conferencia?data=${data}">
