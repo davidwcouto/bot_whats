@@ -4612,28 +4612,24 @@ app.post(
                     req.body.valor_dinheiro
                 );
 
-                if (
-                    informado === null ||
-                    informado < totalCentavos
-                ) {
-                    await conexao.rollback();
+                if (informado === null) {
+					await conexao.rollback();
 
-                    return res.status(400).send(
-                        paginaEntregas('Confira o valor recebido', `
-                            <section>
-                                <p>
-                                    Informe um valor válido, igual
-                                    ou maior que o valor do pedido:
-                                    ${moedaEntregas(entregas[0].total)}.
-                                </p>
+					return res.status(400).send(
+						paginaEntregas('Confira o valor recebido', `
+							<section>
+								<p>
+									Informe um valor válido, igual ou maior que zero.
+									Exemplo: 70,00.
+								</p>
 
-                                <a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
-                                    Voltar à rota
-                                </a>
-                            </section>
-                        `)
-                    );
-                }
+								<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+									Voltar à rota
+								</a>
+							</section>
+						`)
+					);
+				}
 
                 valorRecebido = (informado / 100).toFixed(2);
             }
@@ -4720,9 +4716,20 @@ app.get(
 					) AS dinheiro,
 
                     SUM(
-                        CASE WHEN status_entrega = 'pendente'
-                        THEN total ELSE 0 END
-                    ) AS pendente,
+						CASE
+							WHEN status_entrega = 'pendente'
+								THEN total
+
+							WHEN status_entrega = 'entregue'
+								 AND forma_pagamento = 'dinheiro'
+								THEN GREATEST(
+									total - COALESCE(valor_recebido_dinheiro, total),
+									0
+								)
+
+							ELSE 0
+						END
+					) AS pendente,
 
                     SUM(
                         CASE WHEN status_entrega = 'nao_entregue'
