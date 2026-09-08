@@ -3306,6 +3306,7 @@ app.use('/entregas', async (req, res, next) => {
         await prepararTabelaEntregas();
 		await prepararColunaDinheiro();
 		await prepararColunaColeta();
+		await prepararColunaPixAtendente();
 		next();
     } catch (erro) {
         console.error(
@@ -4356,9 +4357,10 @@ app.post(
 					total,
 					coletar,
 					status_entrega,
-					forma_pagamento
-				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					forma_pagamento,
+					pix_confirmado_atendente
+					)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`, [
 				data,
 				horario,
@@ -4372,7 +4374,8 @@ app.post(
 				(centavos / 100).toFixed(2),
 				textoEntrega(req.body.coletar, 2000) || null,
 				'pendente',
-				req.body.ja_pago_pix === '1' ? 'pix' : 'pendente'
+				req.body.ja_pago_pix === '1' ? 'pix' : 'pendente',
+				req.body.ja_pago_pix === '1' ? 1 : 0
 			]);
 
             res.redirect(303, `/entregas/painel?data=${data}`);
@@ -4426,7 +4429,7 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                 </p>
 
                 <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
-				${e.forma_pagamento === 'pix' && e.status_entrega === 'pendente' ? `
+				${pixConfirmadoPeloAtendente(e) ? `
 					<p style="
 						color: #4ade80;
 						font-weight: bold;
@@ -4482,6 +4485,24 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                         name="codigo"
                         value="${escaparHtml(codigo)}"
                     >
+					
+					${pixConfirmadoPeloAtendente(e) ? `
+						<button
+							name="acao"
+							value="entregue_pago"
+							class="pix"
+						>
+							Entregue
+						</button>
+
+						<button
+							name="acao"
+							value="nao_entregue"
+							class="cinza"
+						>
+							Não entregue
+						</button>
+					` : `
 
                     <button
                         name="acao"
@@ -4555,9 +4576,12 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                         value="pendente"
                         class="cinza"
                     >
-                        Desfazer marcação
-                    </button>
-                </form>
+                            Desfazer marcação
+					</button>
+
+					`}
+
+					</form>
             </article>
         `).join('');
 
@@ -4591,12 +4615,13 @@ app.post(
         const acao = String(req.body.acao || '');
 
         const acoes = {
-            pix: ['entregue', 'pix'],
-            dinheiro: ['entregue', 'dinheiro'],
-            dinheiro_personalizado: ['entregue', 'dinheiro'],
-            nao_entregue: ['nao_entregue', 'pendente'],
-            pendente: ['pendente', 'pendente']
-        };
+			entregue_pago: ['entregue', 'pix'],
+			pix: ['entregue', 'pix'],
+			dinheiro: ['entregue', 'dinheiro'],
+			dinheiro_personalizado: ['entregue', 'dinheiro'],
+			nao_entregue: ['nao_entregue', 'pendente'],
+			pendente: ['pendente', 'pendente']
+		};
 
         if (
             !/^\d+$/.test(id) ||
@@ -4613,7 +4638,11 @@ app.post(
             await conexao.beginTransaction();
 
             const [entregas] = await conexao.execute(`
-                SELECT total
+                SELECT
+					total,
+					forma_pagamento,
+					status_entrega,
+					pix_confirmado_atendente
                 FROM entregas_motoboy
                 WHERE id = ?
                   AND codigo_acesso = ?
@@ -4627,6 +4656,53 @@ app.post(
                     'Entrega não encontrada.'
                 );
             }
+			
+			const entrega = entregas[0];
+
+			if (pixConfirmadoPeloAtendente(entrega)) {
+				if (!['entregue_pago', 'nao_entregue'].includes(acao)) {
+					await conexao.rollback();
+
+					return res.status(403).send(
+						'Este pedido já foi pago no PIX. ' +
+						'Atualize a rota e selecione Entregue ou Não entregue.'
+					);
+				}
+
+				const novoStatus = acao === 'entregue_pago'
+					? 'entregue'
+					: 'nao_entregue';
+
+				// Altera somente a entrega e preserva o pagamento registrado.
+				// Também mantém a identificação nos pedidos antigos.
+				await conexao.execute(`
+					UPDATE entregas_motoboy
+					SET status_entrega = ?,
+						pix_confirmado_atendente = 1
+					WHERE id = ?
+					  AND codigo_acesso = ?
+				`, [
+					novoStatus,
+					id,
+					codigo
+				]);
+
+				await conexao.commit();
+
+				return res.redirect(
+					303,
+					'/entregas/motoboy/' + encodeURIComponent(codigo)
+				);
+			}
+
+			// Impede usar a confirmação especial em pedidos não pagos.
+			if (acao === 'entregue_pago') {
+				await conexao.rollback();
+
+				return res.status(400).send(
+					'Este pedido não possui PIX confirmado pelo atendente.'
+				);
+			}
 
             const totalCentavos = Math.round(
                 Number(entregas[0].total) * 100
@@ -5535,6 +5611,54 @@ app.post(
         }
     }
 );
+
+let colunaPixAtendentePronta = null;
+
+function prepararColunaPixAtendente() {
+    if (!colunaPixAtendentePronta) {
+        colunaPixAtendentePronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'pix_confirmado_atendente'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN pix_confirmado_atendente
+                            TINYINT(1) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaPixAtendentePronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaPixAtendentePronta;
+}
+
+function pixConfirmadoPeloAtendente(entrega) {
+    if (Number(entrega.pix_confirmado_atendente) === 1) {
+        return true;
+    }
+
+    // Compatibilidade com pedidos antigos que hoje mostram o aviso.
+    return entrega.pix_confirmado_atendente == null &&
+        entrega.forma_pagamento === 'pix' &&
+        entrega.status_entrega === 'pendente';
+}
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
