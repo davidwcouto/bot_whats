@@ -5564,7 +5564,7 @@ app.post(
                 `🛵 *Sua rota de entregas — ${rota.motoboy}*`,
                 '',
                 `📅 Data: ${rota.data_formatada}`,
-                `⏰ Saída: ${rota.horario_rota}`,
+                `⏰ Rota: ${rota.horario_rota}`,
                 `📦 Entregas: ${entregas.length}`,
                 '',
                 'Abra o link para visualizar os clientes e registrar os pagamentos:',
