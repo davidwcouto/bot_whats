@@ -4431,7 +4431,7 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 						color: #4ade80;
 						font-weight: bold;
 					">
-						Já pago no PIX — não cobrar do cliente.
+						Já pago no PIX. Confirmado pelo atendente.
 					</p>
 				` : ''}
 				
@@ -4982,7 +4982,7 @@ app.get(
 					coletar
 				FROM entregas_motoboy
 				WHERE data_rota = ?
-				ORDER BY horario_rota, motoboy, id
+				ORDER BY id DESC
 			`, [data]);
 
 			const linhasPedidosConferencia = pedidosConferencia.map(e => `
