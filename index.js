@@ -3891,6 +3891,8 @@ app.get(
 					>
                         ${csrfEntregaCampo()}
 						
+						<input type="hidden" name="ja_pago_pix" value="0">
+						
 						<input type="hidden" name="coletar" value="">
 
                         <input
@@ -4172,6 +4174,15 @@ app.get(
 								quantidadePedidos++;
 								continue;
 							}
+							
+							const pagamentoEncontrado = linha.match(
+								/^Est[aá]\\s+Pago\\s*[?:]\\s*(Sim|N[aã]o)\\s*$/i
+							);
+
+							if (pagamentoEncontrado) {
+								dados.estapago = pagamentoEncontrado[1];
+								continue;
+							}
 
 							const separador = linha.indexOf(':');
 
@@ -4230,13 +4241,8 @@ app.get(
 							dados.estapago || ''
 						);
 
-						if (situacaoPagamento === 'sim') {
-							resultado.textContent =
-								'Não cadastrei: este pedido já está pago. ' +
-								'Precisamos adicionar a opção Já pago ao sistema ' +
-								'para evitar uma nova cobrança.';
-							return;
-						}
+						formulario.elements.namedItem('ja_pago_pix').value =
+							situacaoPagamento === 'sim' ? '1' : '0';
 
 						Object.entries(campos).forEach(function (entrada) {
 							formulario.elements.namedItem(entrada[0]).value =
@@ -4348,9 +4354,11 @@ app.post(
 					endereco,
 					cidade,
 					total,
-					coletar
+					coletar,
+					status_entrega,
+					forma_pagamento
 				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`, [
 				data,
 				horario,
@@ -4362,7 +4370,9 @@ app.post(
 				endereco,
 				textoEntrega(req.body.cidade, 100) || null,
 				(centavos / 100).toFixed(2),
-				textoEntrega(req.body.coletar, 2000) || null
+				textoEntrega(req.body.coletar, 2000) || null,
+				'pendente',
+				req.body.ja_pago_pix === '1' ? 'pix' : 'pendente'
 			]);
 
             res.redirect(303, `/entregas/painel?data=${data}`);
@@ -4416,6 +4426,14 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                 </p>
 
                 <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
+				${e.forma_pagamento === 'pix' && e.status_entrega === 'pendente' ? `
+					<p style="
+						color: #4ade80;
+						font-weight: bold;
+					">
+						Já pago no PIX — não cobrar do cliente.
+					</p>
+				` : ''}
 				
 				${e.coletar ? `
 					<h2>
@@ -4732,6 +4750,7 @@ app.get(
                     SUM(
 						CASE
 							WHEN status_entrega = 'pendente'
+								 AND forma_pagamento = 'pendente'
 								THEN total
 
 							WHEN status_entrega = 'entregue'
