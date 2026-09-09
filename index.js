@@ -4540,7 +4540,6 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 						border: 1px solid #666;
 						border-radius: 8px;
 					">
-						<strong>Pagamento em PIX + dinheiro</strong>
 
 						<div style="
 							display: grid;
@@ -5279,9 +5278,9 @@ app.get(
 				</section>
 
                 <p>
-                    <a href="/entregas/painel?data=${data}">
-                        Voltar ao painel
-                    </a>
+                    <a href="/entregas/painel">
+						Voltar ao painel
+					</a>
                 </p>
             `));
         } catch (erro) {
