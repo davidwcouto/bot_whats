@@ -3307,6 +3307,7 @@ app.use('/entregas', async (req, res, next) => {
 		await prepararColunaDinheiro();
 		await prepararColunaColeta();
 		await prepararColunaPixAtendente();
+		await prepararColunaPixParcial();
 		next();
     } catch (erro) {
         console.error(
@@ -4429,6 +4430,13 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                 </p>
 
                 <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
+				${e.forma_pagamento === 'dinheiro' &&
+				Number(e.valor_recebido_pix) > 0 ? `
+					<p style="color: #4ade80; font-weight: bold;">
+						PIX informado:
+						${moedaEntregas(e.valor_recebido_pix)}
+					</p>
+				` : ''}
 				${pixConfirmadoPeloAtendente(e) ? `
 					<p style="
 						color: #4ade80;
@@ -4467,7 +4475,10 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                     Pagamento:
                     <strong>
                         ${escaparHtml(
-                            pagamentoEntregaTexto(e.forma_pagamento)
+                            e.forma_pagamento === 'dinheiro' &&
+							Number(e.valor_recebido_pix) > 0
+								? 'PIX + dinheiro'
+								: pagamentoEntregaTexto(e.forma_pagamento)
                         )}
                     </strong>
                 </p>
@@ -4562,6 +4573,58 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 							</button>
 						</div>
 					</div>
+					
+					<div style="
+						padding: 12px;
+						border: 1px solid #666;
+						border-radius: 8px;
+					">
+						<strong>Pagamento em PIX + dinheiro</strong>
+
+						<div style="
+							display: grid;
+							grid-template-columns: repeat(2, minmax(0, 1fr));
+							gap: 10px;
+							margin-top: 12px;
+						">
+							<div style="min-width: 0;">
+								<label for="pix-misto-${e.id}">Valor no PIX</label>
+
+								<input
+									id="pix-misto-${e.id}"
+									name="pix_misto"
+									type="text"
+									inputmode="decimal"
+									placeholder="Ex.: 40,00"
+									autocomplete="off"
+								>
+							</div>
+
+							<div style="min-width: 0;">
+								<label for="dinheiro-misto-${e.id}">
+									Valor em dinheiro
+								</label>
+
+								<input
+									id="dinheiro-misto-${e.id}"
+									name="dinheiro_misto"
+									type="text"
+									inputmode="decimal"
+									placeholder="Ex.: 60,00"
+									autocomplete="off"
+								>
+							</div>
+						</div>
+
+						<button
+							name="acao"
+							value="pix_dinheiro"
+							class="pix"
+							style="margin-top: 12px;"
+						>
+							Entregue — PIX + dinheiro
+						</button>
+					</div>
 
                     <button
                         name="acao"
@@ -4619,6 +4682,7 @@ app.post(
 			pix: ['entregue', 'pix'],
 			dinheiro: ['entregue', 'dinheiro'],
 			dinheiro_personalizado: ['entregue', 'dinheiro'],
+			pix_dinheiro: ['entregue', 'dinheiro'],
 			nao_entregue: ['nao_entregue', 'pendente'],
 			pendente: ['pendente', 'pendente']
 		};
@@ -4709,6 +4773,41 @@ app.post(
             );
 
             let valorRecebido = null;
+			let valorPix = null;
+
+			if (acao === 'pix_dinheiro') {
+				const pixCentavos = centavosEntregas(req.body.pix_misto);
+				const dinheiroCentavos = centavosEntregas(
+					req.body.dinheiro_misto
+				);
+
+				if (
+					pixCentavos === null ||
+					dinheiroCentavos === null ||
+					pixCentavos <= 0 ||
+					dinheiroCentavos <= 0
+				) {
+					await conexao.rollback();
+
+					return res.status(400).send(
+						paginaEntregas('Confira os valores', `
+							<section>
+								<p>
+									Para PIX + dinheiro, informe um valor
+									maior que zero em cada campo.
+								</p>
+
+								<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+									Voltar à rota
+								</a>
+							</section>
+						`)
+					);
+				}
+
+				valorPix = (pixCentavos / 100).toFixed(2);
+				valorRecebido = (dinheiroCentavos / 100).toFixed(2);
+			}
 
             if (acao === 'dinheiro') {
                 // Botão original: recebe o valor exato do pedido.
@@ -4745,19 +4844,21 @@ app.post(
             const [status, pagamento] = acoes[acao];
 
             await conexao.execute(`
-                UPDATE entregas_motoboy
-                SET status_entrega = ?,
-                    forma_pagamento = ?,
-                    valor_recebido_dinheiro = ?
-                WHERE id = ?
-                  AND codigo_acesso = ?
-            `, [
-                status,
-                pagamento,
-                valorRecebido,
-                id,
-                codigo
-            ]);
+				UPDATE entregas_motoboy
+				SET status_entrega = ?,
+					forma_pagamento = ?,
+					valor_recebido_dinheiro = ?,
+					valor_recebido_pix = ?
+				WHERE id = ?
+				  AND codigo_acesso = ?
+			`, [
+				status,
+				pagamento,
+				valorRecebido,
+				valorPix,
+				id,
+				codigo
+			]);
 
             await conexao.commit();
 
@@ -4813,9 +4914,16 @@ app.get(
                     COUNT(*) AS quantidade,
 
                     SUM(
-                        CASE WHEN forma_pagamento = 'pix'
-                        THEN total ELSE 0 END
-                    ) AS pix,
+						CASE
+							WHEN forma_pagamento = 'pix'
+								THEN total
+
+							WHEN forma_pagamento = 'dinheiro'
+								THEN COALESCE(valor_recebido_pix, 0)
+
+							ELSE 0
+						END
+					) AS pix,
 
                     SUM(
 						CASE WHEN forma_pagamento = 'dinheiro'
@@ -4832,7 +4940,9 @@ app.get(
 							WHEN status_entrega = 'entregue'
 								 AND forma_pagamento = 'dinheiro'
 								THEN GREATEST(
-									total - COALESCE(valor_recebido_dinheiro, total),
+									total
+										- COALESCE(valor_recebido_dinheiro, total)
+										- COALESCE(valor_recebido_pix, 0),
 									0
 								)
 
@@ -5658,6 +5768,43 @@ function pixConfirmadoPeloAtendente(entrega) {
     return entrega.pix_confirmado_atendente == null &&
         entrega.forma_pagamento === 'pix' &&
         entrega.status_entrega === 'pendente';
+}
+
+let colunaPixParcialPronta = null;
+
+function prepararColunaPixParcial() {
+    if (!colunaPixParcialPronta) {
+        colunaPixParcialPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'valor_recebido_pix'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN valor_recebido_pix
+                            DECIMAL(10,2) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaPixParcialPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaPixParcialPronta;
 }
 
 app.get("/health", (req, res) => {
