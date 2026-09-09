@@ -3308,6 +3308,7 @@ app.use('/entregas', async (req, res, next) => {
 		await prepararColunaColeta();
 		await prepararColunaPixAtendente();
 		await prepararColunaPixParcial();
+		await prepararPrazoEntregas();
 		next();
     } catch (erro) {
         console.error(
@@ -3390,7 +3391,8 @@ function pagamentoEntregaTexto(pagamento) {
     return {
         pendente: 'Não informado',
         pix: 'PIX informado',
-        dinheiro: 'Dinheiro'
+        dinheiro: 'Dinheiro',
+		conta_prazo: 'Conta a prazo'
     }[pagamento] || pagamento;
 }
 
@@ -4412,6 +4414,15 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
         }
 
         const rota = entregas[0];
+		
+		const contasAtivas = await carregarContasPrazoAtivas();
+
+		for (const entrega of entregas) {
+			entrega.contaPrazoAtiva = localizarContaPrazo(
+				contasAtivas,
+				entrega.telefone
+			);
+		}
 
         const cards = entregas.map(e => `
             <article class="${escaparHtml(e.status_entrega)}">
@@ -4517,7 +4528,9 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 						>
 							Não entregue
 						</button>
-					` : `
+                    ` : e.contaPrazoAtiva
+                        ? opcoesEntregaPrazo(e)
+                        : `
 
                     <button
                         name="acao"
@@ -4644,6 +4657,8 @@ app.post(
 			dinheiro_personalizado: ['entregue', 'dinheiro'],
 			pix_dinheiro: ['entregue', 'dinheiro'],
 			nao_entregue: ['nao_entregue', 'pendente'],
+			conta_prazo: ['entregue', 'conta_prazo'],
+			recebimento_prazo: ['pendente', 'conta_prazo'],
 			pendente: ['pendente', 'pendente']
 		};
 
@@ -4662,16 +4677,19 @@ app.post(
             await conexao.beginTransaction();
 
             const [entregas] = await conexao.execute(`
-                SELECT
+				SELECT
 					total,
+					telefone,
 					forma_pagamento,
 					status_entrega,
-					pix_confirmado_atendente
-                FROM entregas_motoboy
-                WHERE id = ?
-                  AND codigo_acesso = ?
-                FOR UPDATE
-            `, [id, codigo]);
+					pix_confirmado_atendente,
+					cliente_conta_prazo_id,
+					dinheiro_conta_prazo
+				FROM entregas_motoboy
+				WHERE id = ?
+				  AND codigo_acesso = ?
+				FOR UPDATE
+			`, [id, codigo]);
 
             if (!entregas.length) {
                 await conexao.rollback();
@@ -4725,6 +4743,125 @@ app.post(
 
 				return res.status(400).send(
 					'Este pedido não possui PIX confirmado pelo atendente.'
+				);
+			}
+			
+			const contasAtivas = await carregarContasPrazoAtivas(conexao);
+
+			const contaAtiva = localizarContaPrazo(
+				contasAtivas,
+				entrega.telefone
+			);
+
+			if (
+				contaAtiva &&
+				entrega.cliente_conta_prazo_id != null &&
+				Number(entrega.cliente_conta_prazo_id) !== Number(contaAtiva.id)
+			) {
+				await conexao.rollback();
+
+				return res.status(409).send(
+					'O cadastro financeiro deste cliente mudou. ' +
+					'Peça para a loja conferir antes de continuar.'
+				);
+			}
+
+			if (contaAtiva) {
+				if (
+					!['conta_prazo', 'nao_entregue', 'recebimento_prazo']
+						.includes(acao)
+				) {
+					await conexao.rollback();
+
+					return res.status(403).send(
+						'Este cliente possui conta a prazo. ' +
+						'Atualize a página para usar as opções correspondentes.'
+					);
+				}
+
+				if (acao === 'recebimento_prazo') {
+					const recebidoCentavos = centavosEntregas(
+						req.body.dinheiro_prazo
+					);
+
+					if (recebidoCentavos === null) {
+						await conexao.rollback();
+
+						return res.status(400).send(
+							paginaEntregas('Confira o valor', `
+								<section>
+									<p>
+										Informe um valor válido.
+										Para corrigir um registro para zero,
+										digite 0,00.
+									</p>
+
+									<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+										Voltar à rota
+									</a>
+								</section>
+							`)
+						);
+					}
+
+					// Apenas registra o dinheiro em posse do motoboy.
+					// Não muda o status da entrega nem o saldo financeiro.
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET dinheiro_conta_prazo = ?,
+							cliente_conta_prazo_id = ?
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						(recebidoCentavos / 100).toFixed(2),
+						contaAtiva.id,
+						id,
+						codigo
+					]);
+				} else {
+					const novoStatus = acao === 'conta_prazo'
+						? 'entregue'
+						: 'nao_entregue';
+
+					// O recebimento para abater dívida fica preservado.
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET status_entrega = ?,
+							forma_pagamento = 'conta_prazo',
+							cliente_conta_prazo_id = ?,
+							valor_recebido_dinheiro = NULL,
+							valor_recebido_pix = NULL
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						novoStatus,
+						contaAtiva.id,
+						id,
+						codigo
+					]);
+				}
+
+				await conexao.commit();
+
+				return res.redirect(
+					303,
+					'/entregas/motoboy/' + encodeURIComponent(codigo)
+				);
+			}
+
+			// Não permite usar a opção sem autorização atual.
+			// Registros que já estavam vinculados à conta a prazo
+			// precisam ser revisados pela loja se o cliente for desativado.
+			if (
+				['conta_prazo', 'recebimento_prazo'].includes(acao) ||
+				entrega.cliente_conta_prazo_id != null ||
+				entrega.forma_pagamento === 'conta_prazo'
+			) {
+				await conexao.rollback();
+
+				return res.status(403).send(
+					'Cliente sem conta a prazo ativa. ' +
+					'Peça para a loja conferir o cadastro.'
 				);
 			}
 
@@ -4893,11 +5030,24 @@ app.get(
 						END
 					) AS pix,
 
-                    SUM(
-						CASE WHEN forma_pagamento = 'dinheiro'
-						THEN COALESCE(valor_recebido_dinheiro, total)
-						ELSE 0 END
+                    (
+						SUM(
+							CASE WHEN forma_pagamento = 'dinheiro'
+							THEN COALESCE(valor_recebido_dinheiro, total)
+							ELSE 0 END
+						)
+						+
+						SUM(COALESCE(dinheiro_conta_prazo, 0))
 					) AS dinheiro,
+
+					SUM(
+						CASE
+							WHEN forma_pagamento = 'conta_prazo'
+								 AND status_entrega = 'entregue'
+							THEN total
+							ELSE 0
+						END
+					) AS conta_prazo,
 
                     SUM(
 						CASE
@@ -5117,6 +5267,7 @@ app.get(
 					}">
 						${moedaEntregas(r.pendente)}
 					</td>
+					<td>${moedaEntregas(r.conta_prazo)}</td>
                     <td>${moedaEntregas(r.nao_entregue)}</td>
 					<td style="min-width: 180px; max-width: 300px;">
 						${mostrarColetasResumo(r)}
@@ -5133,7 +5284,9 @@ app.get(
 					pedido,
 					cliente,
 					total,
-					coletar
+					coletar,
+					dinheiro_conta_prazo,
+					cliente_conta_prazo_id
 				FROM entregas_motoboy
 				WHERE data_rota = ?
 				ORDER BY id DESC
@@ -5146,6 +5299,18 @@ app.get(
 					<td>${escaparHtml(e.pedido || '—')}</td>
 					<td>${escaparHtml(e.cliente)}</td>
 					<td>${moedaEntregas(e.total)}</td>
+					<td>
+						${Number(e.dinheiro_conta_prazo) > 0 ? `
+							<strong style="color: #4ade80;">
+								${moedaEntregas(e.dinheiro_conta_prazo)}
+							</strong>
+
+							<div style="font-size: 12px; color: #ccc;">
+								Conta do cliente #${Number(e.cliente_conta_prazo_id)}
+								— conferir e baixar manualmente
+							</div>
+						` : '—'}
+					</td>
 					<td style="
 						min-width: 140px;
 						max-width: 280px;
@@ -5204,6 +5369,7 @@ app.get(
                                     <th>PIX informado</th>
                                     <th>Dinheiro a trazer</th>
                                     <th>Sem marcação</th>
+									<th>Conta a prazo</th>
                                     <th>Não entregue</th>
 									<th>Coletas</th>
 									<th>Conferência</th>
@@ -5213,7 +5379,7 @@ app.get(
                             <tbody>
                                 ${linhas || `
                                     <tr>
-                                        <td colspan="9">
+                                        <td colspan="10">
                                             Nenhuma entrega nesta data.
                                         </td>
                                     </tr>
@@ -5259,6 +5425,7 @@ app.get(
 									<th>Pedido</th>
 									<th>Cliente</th>
 									<th>Valor</th>
+									<th>Dinheiro para abater saldo</th>
 									<th>Coletar</th>
 									<th>Ação</th>
 								</tr>
@@ -5267,7 +5434,7 @@ app.get(
 							<tbody>
 								${linhasPedidosConferencia || `
 									<tr>
-										<td colspan="7">
+										<td colspan="8">
 											Nenhuma entrega nesta data.
 										</td>
 									</tr>
@@ -5773,6 +5940,183 @@ function prepararColunaPixParcial() {
     }
 
     return colunaPixParcialPronta;
+}
+
+// ======================================================
+// CONTA A PRAZO NAS ENTREGAS
+// Não altera movimentacoes_conta_prazo.
+// ======================================================
+
+let estruturaPrazoEntregasPronta = null;
+
+function prepararPrazoEntregas() {
+    if (!estruturaPrazoEntregasPronta) {
+        estruturaPrazoEntregasPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME, COLUMN_TYPE
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+            `);
+
+            const nomes = new Set(
+                colunas.map(c => c.COLUMN_NAME)
+            );
+
+            const novasColunas = [
+                [
+                    'cliente_conta_prazo_id',
+                    'INT NULL DEFAULT NULL'
+                ],
+                [
+                    'dinheiro_conta_prazo',
+                    'DECIMAL(10,2) NOT NULL DEFAULT 0'
+                ]
+            ];
+
+            for (const [nome, definicao] of novasColunas) {
+                if (!nomes.has(nome)) {
+                    try {
+                        await db.execute(
+                            'ALTER TABLE entregas_motoboy ' +
+                            'ADD COLUMN ' + nome + ' ' + definicao
+                        );
+                    } catch (erro) {
+                        if (erro.code !== 'ER_DUP_FIELDNAME') {
+                            throw erro;
+                        }
+                    }
+                }
+            }
+
+            const pagamento = colunas.find(
+                c => c.COLUMN_NAME === 'forma_pagamento'
+            );
+
+            if (
+                pagamento &&
+                !pagamento.COLUMN_TYPE.includes("'conta_prazo'")
+            ) {
+                await db.execute(`
+                    ALTER TABLE entregas_motoboy
+                    MODIFY COLUMN forma_pagamento ENUM(
+                        'pendente',
+                        'pix',
+                        'dinheiro',
+                        'conta_prazo'
+                    ) NOT NULL DEFAULT 'pendente'
+                `);
+            }
+        })().catch(erro => {
+            estruturaPrazoEntregasPronta = null;
+            throw erro;
+        });
+    }
+
+    return estruturaPrazoEntregasPronta;
+}
+
+async function carregarContasPrazoAtivas(executor = db) {
+    const [clientes] = await executor.execute(`
+        SELECT id, nome, telefone
+        FROM clientes_conta_prazo
+        WHERE ativo = 1
+    `);
+
+    return clientes;
+}
+
+function localizarContaPrazo(clientes, telefone) {
+    const numero = normalizarTelefoneConta(telefone);
+
+    if (!numero) {
+        return null;
+    }
+
+    const encontrados = clientes.filter(cliente =>
+        normalizarTelefoneConta(cliente.telefone) === numero
+    );
+
+    // Não escolhe silenciosamente entre cadastros duplicados.
+    if (encontrados.length > 1) {
+        throw new Error(
+            'Existe mais de um cliente ativo com o mesmo telefone ' +
+            'na conta a prazo. Confira os cadastros.'
+        );
+    }
+
+    return encontrados[0] || null;
+}
+
+function opcoesEntregaPrazo(entrega) {
+    return `
+        <p style="color: #f1c40f; margin: 0;">
+            Cliente autorizado a comprar a prazo.
+        </p>
+
+        <button
+            name="acao"
+            value="conta_prazo"
+            class="pix"
+        >
+            Entregue — conta a prazo
+        </button>
+
+        <button
+            name="acao"
+            value="nao_entregue"
+            class="cinza"
+        >
+            Não entregue
+        </button>
+
+        <div style="
+            padding: 12px;
+            border: 1px solid #666;
+            border-radius: 8px;
+        ">
+            <label for="recebimento-prazo-${entrega.id}">
+                Dinheiro recebido para abater do saldo
+            </label>
+
+            <input
+                id="recebimento-prazo-${entrega.id}"
+                name="dinheiro_prazo"
+                type="text"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="Ex.: 50,00"
+                value="${
+                    Number(entrega.dinheiro_conta_prazo) > 0
+                        ? Number(entrega.dinheiro_conta_prazo)
+                            .toFixed(2).replace('.', ',')
+                        : ''
+                }"
+            >
+
+            <button
+                name="acao"
+                value="recebimento_prazo"
+                class="dinheiro"
+                style="margin-top: 10px;"
+            >
+                Salvar dinheiro recebido
+            </button>
+
+            <p class="aviso" style="font-size: 13px;">
+                Informe o total recebido neste atendimento,
+                descontando eventual troco.
+                A loja fará a baixa depois da conferência.
+            </p>
+
+            <p style="color: #4ade80; font-weight: bold;">
+                Registrado:
+                ${moedaEntregas(entrega.dinheiro_conta_prazo)}
+            </p>
+        </div>
+    `;
 }
 
 app.get("/health", (req, res) => {
