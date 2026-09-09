@@ -3836,13 +3836,15 @@ app.get(
                 <section>
                     <form method="get">
                         <label>Data das entregas</label>
-                        <div style="
+						
+						<div style="
 							display: flex;
 							align-items: center;
 							flex-wrap: wrap;
 							gap: 16px;
 						">
 							<input
+								id="dataConsultaEntregas"
 								type="date"
 								name="data"
 								value="${data}"
@@ -3855,18 +3857,60 @@ app.get(
 								"
 							>
 
-							<span style="
-								color: #f1c40f;
-								font-size: 26px;
-								font-weight: bold;
-								line-height: 1.3;
-							">
-								Hoje: ${DateTime.now()
-									.setZone('America/Sao_Paulo')
-									.setLocale('pt-BR')
-									.toFormat('cccc — dd/LL/yyyy')}
-							</span>
+							<span
+								id="descricaoDataEntregas"
+								style="
+									color: #f1c40f;
+									font-size: 26px;
+									font-weight: bold;
+									line-height: 1.3;
+								"
+							></span>
 						</div>
+
+						<script>
+						(function () {
+							const campo = document.getElementById('dataConsultaEntregas');
+							const descricao = document.getElementById('descricaoDataEntregas');
+
+							function atualizarDescricao() {
+								if (!campo.value || !campo.validity.valid) {
+									descricao.textContent = '';
+									return;
+								}
+
+								const partes = campo.value.split('-').map(Number);
+
+								const selecionada = new Date(0);
+								selecionada.setUTCFullYear(
+									partes[0],
+									partes[1] - 1,
+									partes[2]
+								);
+								selecionada.setUTCHours(12, 0, 0, 0);
+
+								const diaSemana = selecionada.toLocaleDateString('pt-BR', {
+									weekday: 'long',
+									timeZone: 'UTC'
+								});
+
+								const dataFormatada = selecionada.toLocaleDateString('pt-BR', {
+									day: '2-digit',
+									month: '2-digit',
+									year: 'numeric',
+									timeZone: 'UTC'
+								});
+
+								descricao.textContent = diaSemana + ' — ' + dataFormatada;
+							}
+
+							campo.addEventListener('input', atualizarDescricao);
+							campo.addEventListener('change', atualizarDescricao);
+
+							atualizarDescricao();
+						})();
+						</script>
+ 
                         <br><br>
                         <button>Consultar data</button>
                     </form>
