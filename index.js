@@ -4607,14 +4607,6 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                         Não entregue
                     </button>
 
-                    <button
-                        name="acao"
-                        value="pendente"
-                        class="cinza"
-                    >
-                            Desfazer marcação
-					</button>
-
 					`}
 
 					</form>
@@ -6104,12 +6096,6 @@ function opcoesEntregaPrazo(entrega) {
             >
                 Salvar dinheiro recebido
             </button>
-
-            <p class="aviso" style="font-size: 13px;">
-                Informe o total recebido neste atendimento,
-                descontando eventual troco.
-                A loja fará a baixa depois da conferência.
-            </p>
 
             <p style="color: #4ade80; font-weight: bold;">
                 Registrado:
