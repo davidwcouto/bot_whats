@@ -4477,7 +4477,11 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                         ${escaparHtml(
                             e.forma_pagamento === 'dinheiro' &&
 							Number(e.valor_recebido_pix) > 0
-								? 'PIX + dinheiro'
+								? (
+									Number(e.valor_recebido_dinheiro) > 0
+										? 'PIX + dinheiro'
+										: 'PIX informado'
+								)
 								: pagamentoEntregaTexto(e.forma_pagamento)
                         )}
                     </strong>
@@ -4776,16 +4780,23 @@ app.post(
 			let valorPix = null;
 
 			if (acao === 'pix_dinheiro') {
-				const pixCentavos = centavosEntregas(req.body.pix_misto);
-				const dinheiroCentavos = centavosEntregas(
-					req.body.dinheiro_misto
-				);
+				const textoPix = String(req.body.pix_misto ?? '').trim();
+				const textoDinheiro = String(
+					req.body.dinheiro_misto ?? ''
+				).trim();
+
+				const pixCentavos = textoPix === ''
+					? 0
+					: centavosEntregas(textoPix);
+
+				const dinheiroCentavos = textoDinheiro === ''
+					? 0
+					: centavosEntregas(textoDinheiro);
 
 				if (
 					pixCentavos === null ||
 					dinheiroCentavos === null ||
-					pixCentavos <= 0 ||
-					dinheiroCentavos <= 0
+					pixCentavos + dinheiroCentavos <= 0
 				) {
 					await conexao.rollback();
 
@@ -4793,8 +4804,9 @@ app.post(
 						paginaEntregas('Confira os valores', `
 							<section>
 								<p>
-									Para PIX + dinheiro, informe um valor
-									maior que zero em cada campo.
+									Preencha pelo menos um dos campos com
+									um valor maior que zero.
+									O outro pode ficar vazio.
 								</p>
 
 								<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
