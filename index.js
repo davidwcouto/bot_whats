@@ -3836,12 +3836,37 @@ app.get(
                 <section>
                     <form method="get">
                         <label>Data das entregas</label>
-                        <input
-                            type="date"
-                            name="data"
-                            value="${data}"
-                            required
-                        >
+                        <div style="
+							display: flex;
+							align-items: center;
+							flex-wrap: wrap;
+							gap: 16px;
+						">
+							<input
+								type="date"
+								name="data"
+								value="${data}"
+								required
+								style="
+									width: 220px;
+									max-width: 100%;
+									flex: 0 1 220px;
+									min-width: 0;
+								"
+							>
+
+							<span style="
+								color: #f1c40f;
+								font-size: 26px;
+								font-weight: bold;
+								line-height: 1.3;
+							">
+								Hoje: ${DateTime.now()
+									.setZone('America/Sao_Paulo')
+									.setLocale('pt-BR')
+									.toFormat('cccc — dd/LL/yyyy')}
+							</span>
+						</div>
                         <br><br>
                         <button>Consultar data</button>
                     </form>
