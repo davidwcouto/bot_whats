@@ -4534,50 +4534,7 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                     >
                         Entregue — recebi em dinheiro
                     </button>
-					
-					<div style="
-						padding: 12px;
-						border: 1px solid #666;
-						border-radius: 8px;
-					">
-						<label for="valor-dinheiro-${e.id}">
-							Valor recebido em dinheiro
-						</label>
-
-						<div style="
-							display: flex;
-							align-items: stretch;
-							gap: 10px;
-						">
-							<input
-								id="valor-dinheiro-${e.id}"
-								name="valor_dinheiro"
-								type="text"
-								inputmode="decimal"
-								placeholder="Ex.: 120,00"
-								autocomplete="off"
-								style="
-									flex: 1;
-									min-width: 0;
-									width: auto;
-								"
-							>
-
-							<button
-								name="acao"
-								value="dinheiro_personalizado"
-								class="dinheiro"
-								style="
-									width: auto;
-									flex-shrink: 0;
-									padding: 12px 16px;
-								"
-							>
-								Entregue
-							</button>
-						</div>
-					</div>
-					
+										
 					<div style="
 						padding: 12px;
 						border: 1px solid #666;
