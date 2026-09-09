@@ -3865,51 +3865,12 @@ app.get(
 									font-weight: bold;
 									line-height: 1.3;
 								"
-							></span>
+							>
+								${DateTime.fromISO(data, { zone: 'America/Sao_Paulo' })
+									.setLocale('pt-BR')
+									.toFormat('cccc — dd/LL/yyyy')}
+							</span>
 						</div>
-
-						<script>
-						(function () {
-							const campo = document.getElementById('dataConsultaEntregas');
-							const descricao = document.getElementById('descricaoDataEntregas');
-
-							function atualizarDescricao() {
-								if (!campo.value || !campo.validity.valid) {
-									descricao.textContent = '';
-									return;
-								}
-
-								const partes = campo.value.split('-').map(Number);
-
-								const selecionada = new Date(0);
-								selecionada.setUTCFullYear(
-									partes[0],
-									partes[1] - 1,
-									partes[2]
-								);
-								selecionada.setUTCHours(12, 0, 0, 0);
-
-								const diaSemana = selecionada.toLocaleDateString('pt-BR', {
-									weekday: 'long',
-									timeZone: 'UTC'
-								});
-
-								const dataFormatada = selecionada.toLocaleDateString('pt-BR', {
-									day: '2-digit',
-									month: '2-digit',
-									year: 'numeric',
-									timeZone: 'UTC'
-								});
-
-								descricao.textContent = diaSemana + ' — ' + dataFormatada;
-							}
-
-							campo.addEventListener('input', atualizarDescricao);
-							campo.addEventListener('change', atualizarDescricao);
-
-							atualizarDescricao();
-						})();
-						</script>
  
                         <br><br>
                         <button>Consultar data</button>
