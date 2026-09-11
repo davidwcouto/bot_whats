@@ -4874,26 +4874,37 @@ app.post(
                     );
                 }
 
-                // Guarda o total uma única vez no grupo.
-                // Não altera a entrega, o pedido ou o saldo financeiro.
-                for (let indice = 0; indice < grupo.length; indice++) {
-                    const e = grupo[indice];
+                // Registra o dinheiro uma única vez e confirma
+				// a entrega de todos os pedidos do cartão.
+				// Não altera o saldo financeiro do cliente.
+				for (let indice = 0; indice < grupo.length; indice++) {
+					const e = grupo[indice];
+					const pixProtegido = pixConfirmadoPeloAtendente(e);
 
-                    await conexao.execute(`
-                        UPDATE entregas_motoboy
-                        SET dinheiro_conta_prazo = ?,
-                            cliente_conta_prazo_id = ?
-                        WHERE id = ?
-                          AND codigo_acesso = ?
-                    `, [
-                        indice === 0
-                            ? (recebido / 100).toFixed(2)
-                            : '0.00',
-                        conta.id,
-                        e.id,
-                        codigo
-                    ]);
-                }
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET dinheiro_conta_prazo = ?,
+							cliente_conta_prazo_id = ?,
+							status_entrega = 'entregue',
+							forma_pagamento = ?,
+							pix_confirmado_atendente = ?,
+							valor_recebido_dinheiro = ?,
+							valor_recebido_pix = ?
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						indice === 0
+							? (recebido / 100).toFixed(2)
+							: '0.00',
+						conta.id,
+						pixProtegido ? e.forma_pagamento : 'conta_prazo',
+						pixProtegido ? 1 : e.pix_confirmado_atendente,
+						pixProtegido ? e.valor_recebido_dinheiro : null,
+						pixProtegido ? e.valor_recebido_pix : null,
+						e.id,
+						codigo
+					]);
+				}
             } else if (acao === 'nao_entregue') {
                 // Marcar como não entregue não apaga dinheiro
                 // ou PIX que já tenham sido registrados.
