@@ -4433,7 +4433,8 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
     try {
         const [entregas] = await db.execute(`
             SELECT *,
-                DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada
+                DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
             FROM entregas_motoboy
             WHERE codigo_acesso = ?
             ORDER BY id
@@ -4443,205 +4444,285 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
             return res.status(404).send('Rota não encontrada.');
         }
 
+        const contasAtivas = await carregarContasPrazoAtivas();
+        const grupos = agruparEntregasMotoboy(entregas);
         const rota = entregas[0];
-		
-		const contasAtivas = await carregarContasPrazoAtivas();
 
-		for (const entrega of entregas) {
-			entrega.contaPrazoAtiva = localizarContaPrazo(
-				contasAtivas,
-				entrega.telefone
-			);
-		}
+        const cards = grupos.map(grupo => {
+            const primeiro = grupo[0];
 
-        const cards = entregas.map(e => `
-            <article class="${escaparHtml(e.status_entrega)}">
-                <h2>${escaparHtml(e.cliente)}</h2>
+            const confirmados = grupo.filter(
+                pixConfirmadoPeloAtendente
+            );
 
-                <p>
-                    ${escaparHtml(e.endereco)}
-                    <br>
-                    ${escaparHtml(e.cidade || '')}
-                </p>
+            const restantes = grupo.filter(
+                e => !pixConfirmadoPeloAtendente(e)
+            );
 
-                <p>
-                    Pedido: ${escaparHtml(e.pedido || '—')}
-                    <br>
-                    Telefone: ${escaparHtml(e.telefone || '—')}
-                </p>
+            const total = somaGrupo(grupo, 'total');
+            const pixConfirmado = somaGrupo(confirmados, 'total');
+            const valorRestante = somaGrupo(restantes, 'total');
 
-                <h2>Valor do pedido: ${moedaEntregas(e.total)}</h2>
-				${e.forma_pagamento === 'dinheiro' &&
-				Number(e.valor_recebido_pix) > 0 ? `
-					<p style="color: #4ade80; font-weight: bold;">
-						PIX informado:
-						${moedaEntregas(e.valor_recebido_pix)}
-					</p>
-				` : ''}
-				${pixConfirmadoPeloAtendente(e) ? `
-					<p style="
-						color: #4ade80;
-						font-weight: bold;
-					">
-						Já pago no PIX. Confirmado pelo atendente.
-					</p>
-				` : ''}
-				
-				${e.coletar ? `
-					<h2>
-						Peças pra coletar:
-						<span style="color: #ff4d4f;">
-							${escaparHtml(e.coletar)}
-						</span>
-					</h2>
-				` : ''}
-				
-				${e.forma_pagamento === 'dinheiro' ? `
-					<p style="color: #4ade80; font-weight: bold;">
-						Recebido em dinheiro:
-						${moedaEntregas(
-							e.valor_recebido_dinheiro ?? e.total
-						)}
-					</p>
-				` : ''}
+            const contaAtiva = localizarContaPrazo(
+                contasAtivas,
+                primeiro.telefone
+            );
 
-                <p>
-                    Entrega:
-                    <strong>
-                        ${escaparHtml(
-                            statusEntregaTexto(e.status_entrega)
-                        )}
-                    </strong>
-                    <br>
-                    Pagamento:
-                    <strong>
-                        ${escaparHtml(
-                            e.forma_pagamento === 'dinheiro' &&
-							Number(e.valor_recebido_pix) > 0
-								? (
-									Number(e.valor_recebido_dinheiro) > 0
-										? 'PIX + dinheiro'
-										: 'PIX informado'
-								)
-								: pagamentoEntregaTexto(e.forma_pagamento)
-                        )}
-                    </strong>
-                </p>
+            const contaInvalida = restantes.some(e =>
+                (
+                    e.cliente_conta_prazo_id != null &&
+                    (
+                        !contaAtiva ||
+                        Number(e.cliente_conta_prazo_id) !==
+                            Number(contaAtiva.id)
+                    )
+                ) ||
+                (
+                    e.forma_pagamento === 'conta_prazo' &&
+                    !contaAtiva
+                )
+            );
 
-                <form
-                    method="post"
-                    action="/entregas/${e.id}/confirmar"
-                    class="botoes"
-                    onsubmit="return confirm('Confirma esta alteração?')"
-                >
-                    ${csrfEntregaCampo()}
+            const estado = estadoGrupoEntrega(grupo);
 
-                    <input
-                        type="hidden"
-                        name="codigo"
-                        value="${escaparHtml(codigo)}"
-                    >
-					
-					${pixConfirmadoPeloAtendente(e) ? `
-						<button
-							name="acao"
-							value="entregue_pago"
-							class="pix"
-						>
-							Entregue
-						</button>
+            const estadosDiferentes = new Set(
+                grupo.map(e => e.status_entrega)
+            ).size > 1;
 
-						<button
-							name="acao"
-							value="nao_entregue"
-							class="cinza"
-						>
-							Não entregue
-						</button>
-                    ` : e.contaPrazoAtiva
-                        ? opcoesEntregaPrazo(e)
-                        : `
+            const pedidos = grupo
+                .map(e => e.pedido || '—')
+                .join(', ');
 
-                    <button
-                        name="acao"
-                        value="pix"
-                        class="pix"
-                    >
+            const coletas = grupo
+                .map(e => String(e.coletar || '').trim())
+                .filter(Boolean)
+                .join(' — ');
+
+            const dinheiroPedido = grupo.reduce((soma, e) => {
+                if (e.forma_pagamento !== 'dinheiro') return soma;
+
+                return soma + centavosGrupo(
+                    e.valor_recebido_dinheiro ?? e.total
+                );
+            }, 0);
+
+            const pixInformado = restantes.reduce((soma, e) => {
+                if (e.forma_pagamento === 'pix') {
+                    return soma + centavosGrupo(e.total);
+                }
+
+                if (e.forma_pagamento === 'dinheiro') {
+                    return soma + centavosGrupo(e.valor_recebido_pix);
+                }
+
+                return soma;
+            }, 0);
+
+            const dinheiroSaldo = somaGrupo(
+                grupo,
+                'dinheiro_conta_prazo'
+            );
+
+            let opcoes;
+
+            if (!restantes.length) {
+                opcoes = `
+                    <button name="acao" value="entregue_pago" class="pix">
+                        Entregue
+                    </button>
+
+                    <button name="acao" value="nao_entregue" class="cinza">
+                        Não entregue
+                    </button>
+                `;
+            } else if (contaInvalida) {
+                opcoes = `
+                    <p class="aviso">
+                        A loja precisa conferir o cadastro da conta
+                        a prazo antes de alterar esta entrega.
+                    </p>
+                `;
+            } else if (contaAtiva) {
+                opcoes = opcoesEntregaPrazo({
+                    ...primeiro,
+                    dinheiro_conta_prazo: dinheiroSaldo / 100
+                });
+            } else {
+                opcoes = `
+                    <button name="acao" value="pix" class="pix">
                         Entregue — cliente pagou no PIX
                     </button>
 
-                    <button
-                        name="acao"
-                        value="dinheiro"
-                        class="dinheiro"
-                    >
+                    <button name="acao" value="dinheiro" class="dinheiro">
                         Entregue — recebi em dinheiro
                     </button>
-										
-					<div style="
-						padding: 12px;
-						border: 1px solid #666;
-						border-radius: 8px;
-					">
 
-						<div style="
-							display: grid;
-							grid-template-columns: repeat(2, minmax(0, 1fr));
-							gap: 10px;
-							margin-top: 12px;
-						">
-							<div style="min-width: 0;">
-								<label for="pix-misto-${e.id}">Valor no PIX</label>
+                    <div style="
+                        padding: 12px;
+                        border: 1px solid #666;
+                        border-radius: 8px;
+                    ">
+                        <div style="
+                            display: grid;
+                            grid-template-columns: repeat(2, minmax(0, 1fr));
+                            gap: 10px;
+                        ">
+                            <div style="min-width: 0;">
+                                <label for="pix-grupo-${primeiro.id}">
+                                    Valor no PIX
+                                </label>
 
-								<input
-									id="pix-misto-${e.id}"
-									name="pix_misto"
-									type="text"
-									inputmode="decimal"
-									placeholder="Ex.: 40,00"
-									autocomplete="off"
-								>
-							</div>
+                                <input
+                                    id="pix-grupo-${primeiro.id}"
+                                    name="pix_misto"
+                                    type="text"
+                                    inputmode="decimal"
+                                    autocomplete="off"
+                                    placeholder="Ex.: 40,00"
+                                >
+                            </div>
 
-							<div style="min-width: 0;">
-								<label for="dinheiro-misto-${e.id}">
-									Valor em dinheiro
-								</label>
+                            <div style="min-width: 0;">
+                                <label for="dinheiro-grupo-${primeiro.id}">
+                                    Valor em dinheiro
+                                </label>
 
-								<input
-									id="dinheiro-misto-${e.id}"
-									name="dinheiro_misto"
-									type="text"
-									inputmode="decimal"
-									placeholder="Ex.: 60,00"
-									autocomplete="off"
-								>
-							</div>
-						</div>
+                                <input
+                                    id="dinheiro-grupo-${primeiro.id}"
+                                    name="dinheiro_misto"
+                                    type="text"
+                                    inputmode="decimal"
+                                    autocomplete="off"
+                                    placeholder="Ex.: 25,00"
+                                >
+                            </div>
+                        </div>
 
-						<button
-							name="acao"
-							value="pix_dinheiro"
-							class="pix"
-							style="margin-top: 12px;"
-						>
-							Entregue — PIX + dinheiro
-						</button>
-					</div>
+                        <p class="aviso" style="font-size: 13px;">
+                            Informe o total recebido para os pedidos
+                            deste cartão. Não inclua o PIX já confirmado
+                            pelo atendente. Um campo pode ficar vazio.
+                        </p>
 
-                    <button
-                        name="acao"
-                        value="nao_entregue"
-                        class="cinza"
-                    >
+                        <button
+                            name="acao"
+                            value="pix_dinheiro"
+                            class="pix"
+                        >
+                            Entregue — salvar pagamento
+                        </button>
+                    </div>
+
+                    <button name="acao" value="nao_entregue" class="cinza">
                         Não entregue
                     </button>
+                `;
+            }
 
-					`}
+            return `
+                <article class="${estado}">
+                    <h2>${escaparHtml(primeiro.cliente)}</h2>
 
-					</form>
-            </article>
-        `).join('');
+                    <p>
+                        ${escaparHtml(primeiro.endereco)}
+                        <br>
+                        ${escaparHtml(primeiro.cidade || '')}
+                    </p>
+
+                    <p>
+                        Pedidos: ${escaparHtml(pedidos)}
+                        <br>
+                        Telefone: ${escaparHtml(primeiro.telefone || '—')}
+                    </p>
+
+                    <h2>
+                        Total dos pedidos: ${moedaEntregas(total / 100)}
+                    </h2>
+
+                    ${confirmados.length ? `
+                        <p style="color: #4ade80; font-weight: bold;">
+                            Já pago no PIX. Confirmado pelo atendente:
+                            ${moedaEntregas(pixConfirmado / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${restantes.length ? `
+                        <h2>
+                            ${
+                                contaAtiva
+                                    ? 'Valor dos pedidos a prazo'
+                                    : 'Valor dos pedidos sem PIX confirmado'
+                            }:
+                            ${moedaEntregas(valorRestante / 100)}
+                        </h2>
+                    ` : ''}
+
+                    ${coletas ? `
+                        <h2>
+                            Peças pra coletar:
+                            <span style="color: #ff4d4f;">
+                                ${escaparHtml(coletas)}
+                            </span>
+                        </h2>
+                    ` : ''}
+
+                    <p>
+                        Entrega:
+                        <strong>
+                            ${
+                                estadosDiferentes
+                                    ? 'Parcial — há pedidos com situações diferentes'
+                                    : escaparHtml(statusEntregaTexto(estado))
+                            }
+                        </strong>
+                    </p>
+
+                    ${pixInformado > 0 ? `
+                        <p style="color: #4ade80;">
+                            PIX registrado pelo motoboy:
+                            ${moedaEntregas(pixInformado / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${dinheiroPedido > 0 ? `
+                        <p style="color: #4ade80;">
+                            Dinheiro dos pedidos:
+                            ${moedaEntregas(dinheiroPedido / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${dinheiroSaldo > 0 ? `
+                        <p style="color: #4ade80;">
+                            Dinheiro para abater saldo:
+                            ${moedaEntregas(dinheiroSaldo / 100)}
+                        </p>
+                    ` : ''}
+
+                    <form
+                        method="post"
+                        action="/entregas/${primeiro.id}/confirmar"
+                        class="botoes"
+                        onsubmit="return confirm('Confirma o registro para os pedidos deste cartão?')"
+                    >
+                        ${csrfEntregaCampo()}
+
+                        <input
+                            type="hidden"
+                            name="codigo"
+                            value="${escaparHtml(codigo)}"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="revisao"
+                            value="${revisaoGrupoEntrega(grupo)}"
+                        >
+
+                        ${opcoes}
+                    </form>
+                </article>
+            `;
+        }).join('');
 
         res.send(paginaEntregas(
             `Rota das ${rota.horario_rota}`,
@@ -4655,8 +4736,12 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
             `
         ));
     } catch (erro) {
-        console.error('Erro ao abrir rota do motoboy:', erro);
-        res.status(500).send('Não foi possível abrir a rota.');
+        console.error('Erro ao abrir rota agrupada:', erro);
+
+        res.status(500).send(
+            'Não foi possível abrir a rota. ' +
+            'Peça para a loja conferir os cadastros.'
+        );
     }
 });
 
@@ -4670,24 +4755,23 @@ app.post(
     async (req, res) => {
         const id = String(req.params.id || '');
         const codigo = String(req.body.codigo || '');
+        const revisao = String(req.body.revisao || '');
         const acao = String(req.body.acao || '');
 
-        const acoes = {
-			entregue_pago: ['entregue', 'pix'],
-			pix: ['entregue', 'pix'],
-			dinheiro: ['entregue', 'dinheiro'],
-			dinheiro_personalizado: ['entregue', 'dinheiro'],
-			pix_dinheiro: ['entregue', 'dinheiro'],
-			nao_entregue: ['nao_entregue', 'pendente'],
-			conta_prazo: ['entregue', 'conta_prazo'],
-			recebimento_prazo: ['pendente', 'conta_prazo'],
-			pendente: ['pendente', 'pendente']
-		};
+        const permitidas = [
+            'entregue_pago',
+            'pix',
+            'dinheiro',
+            'pix_dinheiro',
+            'nao_entregue',
+            'conta_prazo',
+            'recebimento_prazo'
+        ];
 
         if (
             !/^\d+$/.test(id) ||
             !/^[a-f0-9-]{36}$/.test(codigo) ||
-            !Object.prototype.hasOwnProperty.call(acoes, acao)
+            !permitidas.includes(acao)
         ) {
             return res.status(400).send('Confirmação inválida.');
         }
@@ -4698,298 +4782,249 @@ app.post(
             conexao = await db.getConnection();
             await conexao.beginTransaction();
 
-            const [entregas] = await conexao.execute(`
-				SELECT
-					total,
-					telefone,
-					forma_pagamento,
-					status_entrega,
-					pix_confirmado_atendente,
-					cliente_conta_prazo_id,
-					dinheiro_conta_prazo
-				FROM entregas_motoboy
-				WHERE id = ?
-				  AND codigo_acesso = ?
-				FOR UPDATE
-			`, [id, codigo]);
+            // Lê e bloqueia os pedidos da rota durante a gravação.
+            const [todas] = await conexao.execute(`
+                SELECT *,
+                    DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+                FROM entregas_motoboy
+                WHERE codigo_acesso = ?
+                ORDER BY id
+                FOR UPDATE
+            `, [codigo]);
 
-            if (!entregas.length) {
-                await conexao.rollback();
+            const base = todas.find(e => String(e.id) === id);
 
-                return res.status(404).send(
-                    'Entrega não encontrada.'
+            if (!base) {
+                throw erroGrupoEntrega(
+                    'A entrega foi removida. Atualize a rota.',
+                    409
                 );
             }
-			
-			const entrega = entregas[0];
 
-			if (pixConfirmadoPeloAtendente(entrega)) {
-				if (!['entregue_pago', 'nao_entregue'].includes(acao)) {
-					await conexao.rollback();
+            const chave = chaveGrupoEntrega(base);
 
-					return res.status(403).send(
-						'Este pedido já foi pago no PIX. ' +
-						'Atualize a rota e selecione Entregue ou Não entregue.'
-					);
-				}
+            const grupo = todas.filter(
+                e => chaveGrupoEntrega(e) === chave
+            );
 
-				const novoStatus = acao === 'entregue_pago'
-					? 'entregue'
-					: 'nao_entregue';
+            if (revisao !== revisaoGrupoEntrega(grupo)) {
+                throw erroGrupoEntrega(
+                    'Os pedidos deste cliente foram alterados. ' +
+                    'Atualize a rota e confira os valores antes de confirmar.',
+                    409
+                );
+            }
 
-				// Altera somente a entrega e preserva o pagamento registrado.
-				// Também mantém a identificação nos pedidos antigos.
-				await conexao.execute(`
-					UPDATE entregas_motoboy
-					SET status_entrega = ?,
-						pix_confirmado_atendente = 1
-					WHERE id = ?
-					  AND codigo_acesso = ?
-				`, [
-					novoStatus,
-					id,
-					codigo
-				]);
+            const confirmados = grupo.filter(
+                pixConfirmadoPeloAtendente
+            );
 
-				await conexao.commit();
+            const restantes = grupo.filter(
+                e => !pixConfirmadoPeloAtendente(e)
+            );
 
-				return res.redirect(
-					303,
-					'/entregas/motoboy/' + encodeURIComponent(codigo)
-				);
-			}
+            const contas = await carregarContasPrazoAtivas(conexao);
+            const conta = localizarContaPrazo(contas, base.telefone);
 
-			// Impede usar a confirmação especial em pedidos não pagos.
-			if (acao === 'entregue_pago') {
-				await conexao.rollback();
+            const contaInvalida = restantes.some(e =>
+                (
+                    e.cliente_conta_prazo_id != null &&
+                    (
+                        !conta ||
+                        Number(e.cliente_conta_prazo_id) !==
+                            Number(conta.id)
+                    )
+                ) ||
+                (
+                    e.forma_pagamento === 'conta_prazo' &&
+                    !conta
+                )
+            );
 
-				return res.status(400).send(
-					'Este pedido não possui PIX confirmado pelo atendente.'
-				);
-			}
-			
-			const contasAtivas = await carregarContasPrazoAtivas(conexao);
+            if (contaInvalida) {
+                throw erroGrupoEntrega(
+                    'A loja precisa conferir o cadastro da conta a prazo.',
+                    403
+                );
+            }
 
-			const contaAtiva = localizarContaPrazo(
-				contasAtivas,
-				entrega.telefone
-			);
+            const acoesGrupo = !restantes.length
+                ? ['entregue_pago', 'nao_entregue']
+                : conta
+                    ? ['conta_prazo', 'nao_entregue', 'recebimento_prazo']
+                    : ['pix', 'dinheiro', 'pix_dinheiro', 'nao_entregue'];
 
-			if (
-				contaAtiva &&
-				entrega.cliente_conta_prazo_id != null &&
-				Number(entrega.cliente_conta_prazo_id) !== Number(contaAtiva.id)
-			) {
-				await conexao.rollback();
+            if (!acoesGrupo.includes(acao)) {
+                throw erroGrupoEntrega(
+                    'Esta opção não está disponível para este cliente. ' +
+                    'Atualize a rota.',
+                    403
+                );
+            }
 
-				return res.status(409).send(
-					'O cadastro financeiro deste cliente mudou. ' +
-					'Peça para a loja conferir antes de continuar.'
-				);
-			}
+            if (acao === 'recebimento_prazo') {
+                const recebido = centavosEntregas(
+                    req.body.dinheiro_prazo
+                );
 
-			if (contaAtiva) {
-				if (
-					!['conta_prazo', 'nao_entregue', 'recebimento_prazo']
-						.includes(acao)
-				) {
-					await conexao.rollback();
+                if (recebido === null) {
+                    throw erroGrupoEntrega(
+                        'Informe um valor válido. Para zerar, digite 0,00.'
+                    );
+                }
 
-					return res.status(403).send(
-						'Este cliente possui conta a prazo. ' +
-						'Atualize a página para usar as opções correspondentes.'
-					);
-				}
+                // Registra o dinheiro uma única vez e confirma
+				// a entrega de todos os pedidos do cartão.
+				// Não altera o saldo financeiro do cliente.
+				for (let indice = 0; indice < grupo.length; indice++) {
+					const e = grupo[indice];
+					const pixProtegido = pixConfirmadoPeloAtendente(e);
 
-				if (acao === 'recebimento_prazo') {
-					const recebidoCentavos = centavosEntregas(
-						req.body.dinheiro_prazo
-					);
-
-					if (recebidoCentavos === null) {
-						await conexao.rollback();
-
-						return res.status(400).send(
-							paginaEntregas('Confira o valor', `
-								<section>
-									<p>
-										Informe um valor válido.
-										Para corrigir um registro para zero,
-										digite 0,00.
-									</p>
-
-									<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
-										Voltar à rota
-									</a>
-								</section>
-							`)
-						);
-					}
-
-					// Apenas registra o dinheiro em posse do motoboy.
-					// Não muda o status da entrega nem o saldo financeiro.
 					await conexao.execute(`
 						UPDATE entregas_motoboy
 						SET dinheiro_conta_prazo = ?,
-							cliente_conta_prazo_id = ?
-						WHERE id = ?
-						  AND codigo_acesso = ?
-					`, [
-						(recebidoCentavos / 100).toFixed(2),
-						contaAtiva.id,
-						id,
-						codigo
-					]);
-				} else {
-					const novoStatus = acao === 'conta_prazo'
-						? 'entregue'
-						: 'nao_entregue';
-
-					// O recebimento para abater dívida fica preservado.
-					await conexao.execute(`
-						UPDATE entregas_motoboy
-						SET status_entrega = ?,
-							forma_pagamento = 'conta_prazo',
 							cliente_conta_prazo_id = ?,
-							valor_recebido_dinheiro = NULL,
-							valor_recebido_pix = NULL
+							status_entrega = 'entregue',
+							forma_pagamento = ?,
+							pix_confirmado_atendente = ?,
+							valor_recebido_dinheiro = ?,
+							valor_recebido_pix = ?
 						WHERE id = ?
 						  AND codigo_acesso = ?
 					`, [
-						novoStatus,
-						contaAtiva.id,
-						id,
+						indice === 0
+							? (recebido / 100).toFixed(2)
+							: '0.00',
+						conta.id,
+						pixProtegido ? e.forma_pagamento : 'conta_prazo',
+						pixProtegido ? 1 : e.pix_confirmado_atendente,
+						pixProtegido ? e.valor_recebido_dinheiro : null,
+						pixProtegido ? e.valor_recebido_pix : null,
+						e.id,
 						codigo
 					]);
 				}
+            } else if (acao === 'nao_entregue') {
+                // Marcar como não entregue não apaga dinheiro
+                // ou PIX que já tenham sido registrados.
+                for (const e of grupo) {
+                    await conexao.execute(`
+                        UPDATE entregas_motoboy
+                        SET status_entrega = 'nao_entregue',
+                            pix_confirmado_atendente = ?
+                        WHERE id = ?
+                          AND codigo_acesso = ?
+                    `, [
+                        pixConfirmadoPeloAtendente(e)
+                            ? 1
+                            : e.pix_confirmado_atendente,
+                        e.id,
+                        codigo
+                    ]);
+                }
+            } else {
+                // Os pedidos pagos pelo atendente só mudam de status.
+                for (const e of confirmados) {
+                    await conexao.execute(`
+                        UPDATE entregas_motoboy
+                        SET status_entrega = 'entregue',
+                            pix_confirmado_atendente = 1
+                        WHERE id = ?
+                          AND codigo_acesso = ?
+                    `, [e.id, codigo]);
+                }
 
-				await conexao.commit();
+                if (acao === 'conta_prazo') {
+                    for (const e of restantes) {
+                        await conexao.execute(`
+                            UPDATE entregas_motoboy
+                            SET status_entrega = 'entregue',
+                                forma_pagamento = 'conta_prazo',
+                                cliente_conta_prazo_id = ?,
+                                valor_recebido_dinheiro = NULL,
+                                valor_recebido_pix = NULL
+                            WHERE id = ?
+                              AND codigo_acesso = ?
+                        `, [conta.id, e.id, codigo]);
+                    }
+                } else if (restantes.length) {
+                    const total = somaGrupo(restantes, 'total');
 
-				return res.redirect(
-					303,
-					'/entregas/motoboy/' + encodeURIComponent(codigo)
-				);
-			}
+                    let pix = 0;
+                    let dinheiro = 0;
 
-			// Não permite usar a opção sem autorização atual.
-			// Registros que já estavam vinculados à conta a prazo
-			// precisam ser revisados pela loja se o cliente for desativado.
-			if (
-				['conta_prazo', 'recebimento_prazo'].includes(acao) ||
-				entrega.cliente_conta_prazo_id != null ||
-				entrega.forma_pagamento === 'conta_prazo'
-			) {
-				await conexao.rollback();
+                    if (acao === 'pix') {
+                        pix = total;
+                    } else if (acao === 'dinheiro') {
+                        dinheiro = total;
+                    } else {
+                        const textoPix = String(
+                            req.body.pix_misto ?? ''
+                        ).trim();
 
-				return res.status(403).send(
-					'Cliente sem conta a prazo ativa. ' +
-					'Peça para a loja conferir o cadastro.'
-				);
-			}
+                        const textoDinheiro = String(
+                            req.body.dinheiro_misto ?? ''
+                        ).trim();
 
-            const totalCentavos = Math.round(
-                Number(entregas[0].total) * 100
-            );
+                        pix = textoPix === ''
+                            ? 0
+                            : centavosEntregas(textoPix);
 
-            let valorRecebido = null;
-			let valorPix = null;
+                        dinheiro = textoDinheiro === ''
+                            ? 0
+                            : centavosEntregas(textoDinheiro);
 
-			if (acao === 'pix_dinheiro') {
-				const textoPix = String(req.body.pix_misto ?? '').trim();
-				const textoDinheiro = String(
-					req.body.dinheiro_misto ?? ''
-				).trim();
+                        if (
+                            pix === null ||
+                            dinheiro === null ||
+                            pix + dinheiro <= 0
+                        ) {
+                            throw erroGrupoEntrega(
+                                'Preencha pelo menos um valor maior que zero.'
+                            );
+                        }
+                    }
 
-				const pixCentavos = textoPix === ''
-					? 0
-					: centavosEntregas(textoPix);
+                    const distribuicao = distribuirPagamentoGrupo(
+                        restantes,
+                        pix,
+                        dinheiro
+                    );
 
-				const dinheiroCentavos = textoDinheiro === ''
-					? 0
-					: centavosEntregas(textoDinheiro);
+                    for (const parte of distribuicao) {
+                        // Mantém compatibilidade com os cálculos
+                        // atuais de PIX, dinheiro e Sem marcação.
+                        const forma = acao === 'pix'
+                            ? 'pix'
+                            : 'dinheiro';
 
-				if (
-					pixCentavos === null ||
-					dinheiroCentavos === null ||
-					pixCentavos + dinheiroCentavos <= 0
-				) {
-					await conexao.rollback();
-
-					return res.status(400).send(
-						paginaEntregas('Confira os valores', `
-							<section>
-								<p>
-									Preencha pelo menos um dos campos com
-									um valor maior que zero.
-									O outro pode ficar vazio.
-								</p>
-
-								<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
-									Voltar à rota
-								</a>
-							</section>
-						`)
-					);
-				}
-
-				valorPix = (pixCentavos / 100).toFixed(2);
-				valorRecebido = (dinheiroCentavos / 100).toFixed(2);
-			}
-
-            if (acao === 'dinheiro') {
-                // Botão original: recebe o valor exato do pedido.
-                valorRecebido = (totalCentavos / 100).toFixed(2);
+                        await conexao.execute(`
+                            UPDATE entregas_motoboy
+                            SET status_entrega = 'entregue',
+                                forma_pagamento = ?,
+                                valor_recebido_pix = ?,
+                                valor_recebido_dinheiro = ?
+                            WHERE id = ?
+                              AND codigo_acesso = ?
+                        `, [
+                            forma,
+                            forma === 'pix'
+                                ? null
+                                : (parte.pix / 100).toFixed(2),
+                            forma === 'pix'
+                                ? null
+                                : (parte.dinheiro / 100).toFixed(2),
+                            parte.entrega.id,
+                            codigo
+                        ]);
+                    }
+                }
             }
-
-            if (acao === 'dinheiro_personalizado') {
-                const informado = centavosEntregas(
-                    req.body.valor_dinheiro
-                );
-
-                if (informado === null) {
-					await conexao.rollback();
-
-					return res.status(400).send(
-						paginaEntregas('Confira o valor recebido', `
-							<section>
-								<p>
-									Informe um valor válido, igual ou maior que zero.
-									Exemplo: 70,00.
-								</p>
-
-								<a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
-									Voltar à rota
-								</a>
-							</section>
-						`)
-					);
-				}
-
-                valorRecebido = (informado / 100).toFixed(2);
-            }
-
-            const [status, pagamento] = acoes[acao];
-
-            await conexao.execute(`
-				UPDATE entregas_motoboy
-				SET status_entrega = ?,
-					forma_pagamento = ?,
-					valor_recebido_dinheiro = ?,
-					valor_recebido_pix = ?
-				WHERE id = ?
-				  AND codigo_acesso = ?
-			`, [
-				status,
-				pagamento,
-				valorRecebido,
-				valorPix,
-				id,
-				codigo
-			]);
 
             await conexao.commit();
 
-            res.redirect(
+            return res.redirect(
                 303,
                 '/entregas/motoboy/' + encodeURIComponent(codigo)
             );
@@ -4999,17 +5034,31 @@ app.post(
                     await conexao.rollback();
                 } catch (erroRollback) {
                     console.error(
-                        'Erro ao desfazer confirmação:',
+                        'Erro ao desfazer confirmação agrupada:',
                         erroRollback
                     );
                 }
             }
 
-            console.error('Erro ao confirmar entrega:', erro);
+            console.error('Erro ao confirmar grupo:', erro);
 
-            res.status(500).send(
-                'Não foi possível salvar. Atualize a rota ' +
-                'para conferir a situação antes de tentar novamente.'
+            return res.status(erro.status || 500).send(
+                paginaEntregas('Confira a rota', `
+                    <section>
+                        <p>
+                            ${escaparHtml(
+                                erro.status
+                                    ? erro.message
+                                    : 'Não foi possível confirmar a gravação. ' +
+                                      'Atualize a rota e confira os registros.'
+                            )}
+                        </p>
+
+                        <a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+                            Atualizar rota
+                        </a>
+                    </section>
+                `)
             );
         } finally {
             if (conexao) {
@@ -6133,6 +6182,146 @@ function opcoesEntregaPrazo(entrega) {
             </p>
         </div>
     `;
+}
+
+// ======================================================
+// AGRUPAMENTO DAS ENTREGAS NA TELA DO MOTOBOY
+// ======================================================
+
+function textoChaveGrupo(valor) {
+    return String(valor ?? '')
+        .normalize('NFC')
+        .trim()
+        .toLocaleLowerCase('pt-BR')
+        .replace(/\s+/g, ' ');
+}
+
+function chaveGrupoEntrega(e) {
+    const telefone = normalizarTelefoneConta(e.telefone);
+    const endereco = textoChaveGrupo(e.endereco);
+
+    // Sem identificação suficiente, mantém o pedido separado.
+    if (!telefone || !endereco) {
+        return JSON.stringify(['individual', String(e.id)]);
+    }
+
+    return JSON.stringify([
+        e.codigo_acesso,
+        e.dia_grupo,
+        e.horario_rota,
+        textoChaveGrupo(e.motoboy),
+        telefone,
+        endereco,
+        textoChaveGrupo(e.cidade)
+    ]);
+}
+
+function agruparEntregasMotoboy(entregas) {
+    const grupos = new Map();
+
+    for (const entrega of entregas) {
+        const chave = chaveGrupoEntrega(entrega);
+
+        if (!grupos.has(chave)) {
+            grupos.set(chave, []);
+        }
+
+        grupos.get(chave).push(entrega);
+    }
+
+    return Array.from(grupos.values());
+}
+
+function centavosGrupo(valor) {
+    return Math.round(Number(valor || 0) * 100);
+}
+
+function somaGrupo(entregas, campo) {
+    return entregas.reduce(
+        (soma, e) => soma + centavosGrupo(e[campo]),
+        0
+    );
+}
+
+function revisaoGrupoEntrega(entregas) {
+    // Detecta inclusão, exclusão ou alteração dos pedidos.
+    const dados = entregas.map(e => [
+        String(e.id),
+        chaveGrupoEntrega(e),
+        e.pedido,
+        e.cliente,
+        e.total,
+        e.coletar,
+        e.status_entrega,
+        e.forma_pagamento,
+        e.pix_confirmado_atendente,
+        e.valor_recebido_pix,
+        e.valor_recebido_dinheiro,
+        e.cliente_conta_prazo_id,
+        e.dinheiro_conta_prazo,
+        e.atualizado_em
+    ]);
+
+    return cryptoEntregas
+        .createHash('sha256')
+        .update(JSON.stringify(dados))
+        .digest('hex');
+}
+
+function estadoGrupoEntrega(entregas) {
+    if (entregas.every(e => e.status_entrega === 'entregue')) {
+        return 'entregue';
+    }
+
+    if (entregas.every(e => e.status_entrega === 'nao_entregue')) {
+        return 'nao_entregue';
+    }
+
+    return 'pendente';
+}
+
+function erroGrupoEntrega(mensagem, status = 400) {
+    const erro = new Error(mensagem);
+    erro.status = status;
+    return erro;
+}
+
+function distribuirPagamentoGrupo(entregas, pix, dinheiro) {
+    // Distribuição determinística na ordem dos pedidos.
+    // O valor excedente fica no último pedido do grupo.
+    return entregas.map((e, indice) => {
+        const total = centavosGrupo(e.total);
+
+        let partePix = Math.min(pix, total);
+        pix -= partePix;
+
+        let parteDinheiro = Math.min(
+            dinheiro,
+            total - partePix
+        );
+
+        dinheiro -= parteDinheiro;
+
+        if (indice === entregas.length - 1) {
+            partePix += pix;
+            parteDinheiro += dinheiro;
+        }
+
+        if (
+            partePix > 9999999999 ||
+            parteDinheiro > 9999999999
+        ) {
+            throw erroGrupoEntrega(
+                'O valor informado ultrapassa o limite permitido.'
+            );
+        }
+
+        return {
+            entrega: e,
+            pix: partePix,
+            dinheiro: parteDinheiro
+        };
+    });
 }
 
 app.get("/health", (req, res) => {

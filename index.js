@@ -4733,6 +4733,68 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                 </p>
 
                 ${cards}
+				
+				<script>
+				(function () {
+					const chavePosicao =
+						'posicao-rota-motoboy:' + window.location.pathname;
+
+					// Recupera a posição depois de salvar o pagamento.
+					try {
+						const salvo = sessionStorage.getItem(chavePosicao);
+
+						if (salvo !== null) {
+							sessionStorage.removeItem(chavePosicao);
+
+							const posicao = Number(salvo);
+
+							if (Number.isFinite(posicao) && posicao >= 0) {
+								const restaurar = function () {
+									requestAnimationFrame(function () {
+										window.scrollTo({
+											top: posicao,
+											left: 0,
+											behavior: 'instant'
+										});
+									});
+								};
+
+								if (document.readyState === 'complete') {
+									restaurar();
+								} else {
+									window.addEventListener(
+										'load',
+										restaurar,
+										{ once: true }
+									);
+								}
+							}
+						}
+					} catch (erro) {
+						// O registro continua funcionando se o navegador
+						// não permitir salvar a posição.
+					}
+
+					document.querySelectorAll('form.botoes').forEach(function (formulario) {
+						formulario.addEventListener('submit', function (evento) {
+							// Não guarda a posição se o motoboy cancelar
+							// a confirmação do formulário.
+							if (evento.defaultPrevented) {
+								return;
+							}
+
+							try {
+								sessionStorage.setItem(
+									chavePosicao,
+									String(window.scrollY)
+								);
+							} catch (erro) {
+								// Não interfere no envio do pagamento.
+							}
+						});
+					});
+				})();
+				</script>
             `
         ));
     } catch (erro) {
