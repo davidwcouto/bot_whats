@@ -965,6 +965,62 @@ client.on("message", async (message) => {
 		phone = chatId.replace("@c.us", "");
 	}
 	
+	// ==========================================
+	// SALVAR LINK DE COMPROVANTE INFINITEPAY
+	// ==========================================
+
+	if (
+		!message.hasMedia &&
+		msg.includes("recibo.infinitepay.io/statements/")
+	) {
+		try {
+
+			const matchLink = message.body.match(
+				/https?:\/\/recibo\.infinitepay\.io\/statements\/[^\s]+/i
+			);
+
+			if (!matchLink) {
+				console.log("⚠️ Link InfinitePay não pôde ser extraído.");
+				return;
+			}
+
+			const linkInfinitePay = matchLink[0];
+
+			console.log("🔗 Comprovante InfinitePay recebido:");
+			console.log(linkInfinitePay);
+
+			await db.execute(
+				`
+				INSERT INTO comprovantes_pix_links
+				(
+					url,
+					telefone,
+					processado
+				)
+				VALUES (?, ?, 0)
+				`,
+				[
+					linkInfinitePay,
+					phone
+				]
+			);
+
+			console.log(
+				"✅ Link InfinitePay salvo no banco para conferência."
+			);
+
+		} catch (erro) {
+
+			console.error(
+				"❌ Erro ao salvar link InfinitePay:",
+				erro
+			);
+
+		}
+
+		return;
+	}
+	
 	// Bloco que salva o comprovante
 	if (message.hasMedia) {
 		try {
