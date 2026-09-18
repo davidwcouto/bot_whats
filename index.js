@@ -6442,6 +6442,104 @@ function distribuirPagamentoGrupo(entregas, pix, dinheiro) {
     });
 }
 
+// ======================================================
+// API - COMPROVANTES INFINITEPAY PENDENTES
+// ======================================================
+
+app.get('/api/comprovantes-infinitepay/pendentes', async (req, res) => {
+	try {
+
+		const [links] = await db.execute(`
+			SELECT
+				id,
+				url,
+				telefone,
+				data_recebimento
+			FROM comprovantes_pix_links
+			WHERE processado = 0
+			ORDER BY id ASC
+		`);
+
+		res.json({
+			sucesso: true,
+			total: links.length,
+			links: links
+		});
+
+	} catch (erro) {
+
+		console.error(
+			'❌ Erro ao buscar comprovantes InfinitePay:',
+			erro
+		);
+
+		res.status(500).json({
+			sucesso: false,
+			erro: 'Erro ao buscar comprovantes'
+		});
+	}
+});
+
+
+// ======================================================
+// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADO
+// ======================================================
+
+app.post('/api/comprovantes-infinitepay/:id/processado', async (req, res) => {
+	try {
+
+		const id = Number(req.params.id);
+
+		const {
+			status,
+			pagador,
+			valor
+		} = req.body;
+
+		if (!id) {
+			return res.status(400).json({
+				sucesso: false,
+				erro: 'ID inválido'
+			});
+		}
+
+		await db.execute(
+			`
+			UPDATE comprovantes_pix_links
+			SET
+				processado = 1,
+				status = ?,
+				pagador = ?,
+				valor = ?,
+				processado_em = NOW()
+			WHERE id = ?
+			`,
+			[
+				status || null,
+				pagador || null,
+				valor ?? null,
+				id
+			]
+		);
+
+		res.json({
+			sucesso: true
+		});
+
+	} catch (erro) {
+
+		console.error(
+			'❌ Erro ao atualizar comprovante InfinitePay:',
+			erro
+		);
+
+		res.status(500).json({
+			sucesso: false,
+			erro: 'Erro ao atualizar comprovante'
+		});
+	}
+});
+
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
