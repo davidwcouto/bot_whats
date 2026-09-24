@@ -4001,8 +4001,9 @@ app.get(
                         <div>
 							<label>Motoboy</label>
 							<select name="motoboy" required>
-								<option value="Kaue">Kaue</option>
+								<option value="Diogo">Diogo</option>
 								<option value="Fabricio">Fabricio</option>
+								<option value="Kaue">Kaue</option>
 							</select>
 						</div>
 
@@ -5879,7 +5880,8 @@ function prepararColunaColeta() {
 // ======================================================
 
 const telefonesMotoboys = new Map([
-    ['fabricio', '555181056096'],
+    ['diogo', '555191625679'],
+	['fabricio', '555181056096'],
     ['kaue', '555195891400']
 ]);
 
