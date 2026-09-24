@@ -533,9 +533,13 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
             const delay = Math.floor(Math.random() * 4000) + 4000;
 			await new Promise(r => setTimeout(r, delay));
 
-        } catch (erro) {
-            console.log("❌ Erro ao enviar para:", numero);
-        }
+        catch (erro) {
+			console.error(
+				'❌ Erro ao enviar para:',
+				numero,
+				erro?.stack || erro?.message || erro
+			);
+		}
     }}
 	
 	if (path.extname(caminhoImagem).toLowerCase() === ".mp4" || path.extname(caminhoImagem).toLowerCase() === ".mov") {
@@ -566,9 +570,13 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
             const delay = Math.floor(Math.random() * 4000) + 4000;
 			await new Promise(r => setTimeout(r, delay));
 
-        } catch (erro) {
-            console.log("❌ Erro ao enviar para:", numero);
-        }
+        catch (erro) {
+			console.error(
+				'❌ Erro ao enviar para:',
+				numero,
+				erro?.stack || erro?.message || erro
+			);
+		}
     }}
 
     console.log("✅ Disparo finalizado.");
