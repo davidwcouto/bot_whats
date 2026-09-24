@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node corrigir-media.js && node index.js"
   },
   "engines": {
     "node": "20.x"
