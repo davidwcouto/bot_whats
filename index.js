@@ -1096,6 +1096,15 @@ client.on("message", async (message) => {
 
 					const texto = String(resultado?.data?.text || "")
 						.toLowerCase();
+						
+					// Ignorar imagens de entrega
+					if (
+						texto.includes("entrega moto") ||
+						texto.includes("entrega carro")
+					) {
+						console.log("Imagem ignorada: imagem de entrega.");
+						return;
+					}
 
 					const palavrasChave = [
 						"pix",
