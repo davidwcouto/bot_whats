@@ -533,7 +533,7 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
             const delay = Math.floor(Math.random() * 4000) + 4000;
 			await new Promise(r => setTimeout(r, delay));
 
-        catch (erro) {
+        } catch (erro) {
 			console.error(
 				'❌ Erro ao enviar para:',
 				numero,
@@ -570,7 +570,7 @@ async function enviarMensagemEmMassa(texto, caminhoImagem) {
             const delay = Math.floor(Math.random() * 4000) + 4000;
 			await new Promise(r => setTimeout(r, delay));
 
-        catch (erro) {
+        } catch (erro) {
 			console.error(
 				'❌ Erro ao enviar para:',
 				numero,
