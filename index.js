@@ -1100,7 +1100,8 @@ client.on("message", async (message) => {
 					// Ignorar imagens de entrega
 					if (
 						texto.includes("entrega moto") ||
-						texto.includes("entrega carro")
+						texto.includes("entrega carro") ||
+						texto.includes("aliexpress")
 					) {
 						console.log("Imagem ignorada: imagem de entrega.");
 						return;
