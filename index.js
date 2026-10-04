@@ -6586,7 +6586,67 @@ async function recuperarComprovantesAntigos() {
 
     console.log('📂 Iniciando recuperação desde 28/09/2026...');
 
-    const chats = await client.getChats();
+    const idsConversas = await client.pupPage.evaluate(() => {
+    const conversas = window
+        .require('WAWebCollections')
+        .Chat.getModelsArray();
+
+    const ids = [];
+
+    for (const conversa of conversas) {
+        const id = conversa.id;
+
+        const serializado =
+            typeof id === 'string'
+                ? id
+                : id?._serialized ||
+                  id?.$1 ||
+                  (
+                      id?.user && id?.server
+                          ? String(id.user) + '@' + String(id.server)
+                          : ''
+                  );
+
+        if (
+            typeof serializado === 'string' &&
+            (
+                serializado.endsWith('@c.us') ||
+                serializado.endsWith('@lid')
+            )
+        ) {
+            ids.push(serializado);
+        }
+    }
+
+    return [...new Set(ids)];
+});
+
+console.log(
+    '📂 Conversas individuais disponíveis:',
+    idsConversas.length
+);
+
+if (idsConversas.length === 0) {
+    throw new Error(
+        'Nenhuma conversa individual disponível. ' +
+        'A recuperação não foi realizada.'
+    );
+}
+
+const ChatRecuperacao = require('whatsapp-web.js').Chat;
+
+const chats = idsConversas.map(id => ({
+    id: { _serialized: id },
+    isGroup: false,
+    client,
+
+    fetchMessages(opcoes) {
+        return ChatRecuperacao.prototype.fetchMessages.call(
+            this,
+            opcoes
+        );
+    }
+}));
 
     for (const chat of chats) {
         const chatId = chat.id?._serialized || '';
