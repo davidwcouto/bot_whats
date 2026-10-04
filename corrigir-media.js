@@ -51,3 +51,60 @@ if (original.includes(marcador)) {
 
     console.log('✅ Correção de mídia aplicada ao whatsapp-web.js.');
 }
+
+// Correção do download de fotos no whatsapp-web.js 1.34.7
+{
+    const arquivoDownload = path.join(
+        path.dirname(pacote),
+        'src',
+        'structures',
+        'Message.js'
+    );
+
+    const marcadorDownload =
+        '// COUTECH_FIX_DOWNLOAD_MIMETYPE_1347';
+
+    const originalDownload = fs.readFileSync(
+        arquivoDownload,
+        'utf8'
+    );
+
+    if (originalDownload.includes(marcadorDownload)) {
+        console.log('✅ Correção do download de fotos já aplicada.');
+    } else {
+        const pontoDownload =
+            /(\.downloadManager\.downloadAndMaybeDecrypt\(\{\r?\n)([ \t]*)directPath: msg\.directPath,/g;
+
+        const ocorrencias = [
+            ...originalDownload.matchAll(pontoDownload)
+        ];
+
+        if (ocorrencias.length !== 1) {
+            throw new Error(
+                'Não foi encontrado um ponto único para corrigir ' +
+                'o download de fotos. Message.js não foi alterado.'
+            );
+        }
+
+        const corrigidoDownload = originalDownload.replace(
+            pontoDownload,
+            (_, inicio, espacos) =>
+                inicio +
+                espacos + marcadorDownload + '\n' +
+                espacos + 'mimetype: msg.mimetype,\n' +
+                espacos + 'directPath: msg.directPath,'
+        );
+
+        new vm.Script(corrigidoDownload, {
+            filename: arquivoDownload
+        });
+
+        fs.writeFileSync(
+            arquivoDownload,
+            corrigidoDownload,
+            'utf8'
+        );
+
+        console.log('✅ Correção do download de fotos aplicada.');
+    }
+}
