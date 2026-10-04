@@ -6576,7 +6576,7 @@ async function recuperarComprovantesAntigos() {
         zone: 'America/Sao_Paulo'
     }).startOf('day').toSeconds();
 
-    const fim = DateTime.fromISO('2026-09-29', {
+    const fim = DateTime.fromISO('2026-09-28', {
     zone: 'America/Sao_Paulo'
 }).endOf('day').toSeconds();
 
