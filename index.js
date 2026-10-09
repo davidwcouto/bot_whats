@@ -5188,6 +5188,74 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 					>
 						Troca
 					</button>
+
+					<div style="
+						padding: 12px;
+						border: 1px solid #666;
+						border-radius: 8px;
+					">
+						<div style="
+							display: grid;
+							grid-template-columns: repeat(2, minmax(0, 1fr));
+							gap: 10px;
+						">
+							<div style="min-width: 0;">
+								<label for="pix-troca-${primeiro.id}">
+									Valor no PIX
+								</label>
+
+								<input
+									id="pix-troca-${primeiro.id}"
+									name="pix_misto"
+									type="text"
+									inputmode="decimal"
+									autocomplete="off"
+									placeholder="Ex.: 40,00"
+									style="width: 100%; box-sizing: border-box;"
+								>
+							</div>
+
+							<div style="min-width: 0;">
+								<label for="dinheiro-troca-${primeiro.id}">
+									Valor em dinheiro
+								</label>
+
+								<input
+									id="dinheiro-troca-${primeiro.id}"
+									name="dinheiro_misto"
+									type="text"
+									inputmode="decimal"
+									autocomplete="off"
+									placeholder="Ex.: 25,00"
+									style="width: 100%; box-sizing: border-box;"
+								>
+							</div>
+						</div>
+
+						<p style="font-size: 13px;">
+							Informe o total recebido nesta troca.
+							Um campo pode ficar vazio.
+							Para registrar sem pagamento, clique em Troca.
+						</p>
+
+						<button
+							type="submit"
+							name="acao"
+							value="troca_pagamento"
+							class="pix"
+						>
+							Entregue — salvar pagamento
+						</button>
+					</div>
+
+					<button
+						type="submit"
+						name="acao"
+						value="nao_entregue"
+						class="cinza"
+					>
+						Não entregue
+					</button>
 				`;
 			} else if (!restantes.length) {
                 opcoes = `
@@ -5478,6 +5546,7 @@ app.post(
 
         const permitidas = [
 			'troca',
+			'troca_pagamento'
             'entregue_pago',
             'pix',
             'dinheiro',
@@ -5575,7 +5644,7 @@ app.post(
 			);
 
 			const acoesGrupo = grupoTroca
-				? ['troca', 'nao_entregue']
+				? ['troca', 'troca_pagamento', 'nao_entregue']
 				: !restantes.length
 					? ['entregue_pago', 'nao_entregue']
 					: conta
@@ -5591,6 +5660,7 @@ app.post(
             }
 
             if (acao === 'troca') {
+				// Confirma a entrega sem alterar valores já registrados.
 				for (const e of grupo) {
 					await conexao.execute(`
 						UPDATE entregas_motoboy
@@ -5598,6 +5668,54 @@ app.post(
 						WHERE id = ?
 						  AND codigo_acesso = ?
 					`, [e.id, codigo]);
+				}
+			} else if (acao === 'troca_pagamento') {
+				const textoPix = String(req.body.pix_misto ?? '').trim();
+				const textoDinheiro = String(req.body.dinheiro_misto ?? '').trim();
+
+				const pix = textoPix === ''
+					? 0
+					: centavosEntregas(textoPix);
+
+				const dinheiro = textoDinheiro === ''
+					? 0
+					: centavosEntregas(textoDinheiro);
+
+				if (
+					pix === null ||
+					dinheiro === null ||
+					!Number.isFinite(pix) ||
+					!Number.isFinite(dinheiro) ||
+					pix < 0 ||
+					dinheiro < 0 ||
+					pix + dinheiro <= 0
+				) {
+					throw erroGrupoEntrega(
+						'Preencha pelo menos um valor maior que zero. ' +
+						'Para troca sem pagamento, clique em Troca.'
+					);
+				}
+
+				// Registra o total uma única vez no grupo.
+				// Um novo registro substitui o anterior.
+				for (let indice = 0; indice < grupo.length; indice++) {
+					const e = grupo[indice];
+
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET status_entrega = 'entregue',
+							forma_pagamento = 'dinheiro',
+							pix_confirmado_atendente = 0,
+							valor_recebido_pix = ?,
+							valor_recebido_dinheiro = ?
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						indice === 0 ? (pix / 100).toFixed(2) : '0.00',
+						indice === 0 ? (dinheiro / 100).toFixed(2) : '0.00',
+						e.id,
+						codigo
+					]);
 				}
 			} else if (acao === 'recebimento_prazo') {
                 const recebido = centavosEntregas(
