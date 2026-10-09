@@ -5492,13 +5492,51 @@ app.get(
 					pedido,
 					cliente,
 					total,
-					coletar,
-					dinheiro_conta_prazo,
-					cliente_conta_prazo_id
+					status_entrega,
+					forma_pagamento,
+					pix_confirmado_atendente,
+					valor_recebido_pix,
+					valor_recebido_dinheiro
 				FROM entregas_motoboy
 				WHERE data_rota = ?
 				ORDER BY id DESC
 			`, [data]);
+			
+			function pagamentoNaConferencia(entrega) {
+				if (pixConfirmadoPeloAtendente(entrega)) {
+					return 'PIX — confirmado pelo atendente';
+				}
+
+				if (entrega.forma_pagamento === 'conta_prazo') {
+					return 'Conta a prazo';
+				}
+
+				if (entrega.forma_pagamento === 'pix') {
+					return 'PIX';
+				}
+
+				if (entrega.forma_pagamento === 'dinheiro') {
+					const pix = Number(entrega.valor_recebido_pix || 0);
+
+					const dinheiro = Number(
+						entrega.valor_recebido_dinheiro ?? entrega.total ?? 0
+					);
+
+					if (pix > 0 && dinheiro > 0) {
+						return 'PIX + Dinheiro';
+					}
+
+					if (pix > 0) {
+						return 'PIX';
+					}
+
+					if (dinheiro > 0) {
+						return 'Dinheiro';
+					}
+				}
+
+				return 'Não informado';
+			}
 
 			const linhasPedidosConferencia = pedidosConferencia.map(e => `
 				<tr>
@@ -5507,25 +5545,13 @@ app.get(
 					<td>${escaparHtml(e.pedido || '—')}</td>
 					<td>${escaparHtml(e.cliente)}</td>
 					<td>${moedaEntregas(e.total)}</td>
-					<td>
-						${Number(e.dinheiro_conta_prazo) > 0 ? `
-							<strong style="color: #4ade80;">
-								${moedaEntregas(e.dinheiro_conta_prazo)}
-							</strong>
 
-							<div style="font-size: 12px; color: #ccc;">
-								Conta do cliente #${Number(e.cliente_conta_prazo_id)}
-								— conferir e baixar manualmente
-							</div>
-						` : '—'}
+					<td>
+						<strong>
+							${escaparHtml(pagamentoNaConferencia(e))}
+						</strong>
 					</td>
-					<td style="
-						min-width: 140px;
-						max-width: 280px;
-						white-space: pre-wrap;
-						overflow-wrap: anywhere;
-						color: ${e.coletar ? '#f1c40f' : '#aaa'};
-					">${escaparHtml(e.coletar || '—')}</td>
+
 					<td>
 						<form
 							method="post"
@@ -5633,8 +5659,7 @@ app.get(
 									<th>Pedido</th>
 									<th>Cliente</th>
 									<th>Valor</th>
-									<th>Dinheiro para abater saldo</th>
-									<th>Coletar</th>
+									<th>Pagamento</th>
 									<th>Ação</th>
 								</tr>
 							</thead>
@@ -5642,7 +5667,7 @@ app.get(
 							<tbody>
 								${linhasPedidosConferencia || `
 									<tr>
-										<td colspan="8">
+										<td colspan="7">
 											Nenhuma entrega nesta data.
 										</td>
 									</tr>
