@@ -4305,10 +4305,18 @@ app.post(
                 WHERE recebimento_id = ?
             `, [recebimentoId]);
 
-            return gcPagina(
-                res,
-                `Pagamento confirmado no GestãoClick: ${dados.pagamento.modo}.`
-            );
+            const dataRetornoGC =
+				dados.entrega.data_rota instanceof Date
+					? require('luxon').DateTime
+						.fromJSDate(dados.entrega.data_rota)
+						.toISODate()
+					: String(dados.entrega.data_rota).slice(0, 10);
+
+			return res.redirect(
+				303,
+				'/entregas/conferencia?data=' +
+					encodeURIComponent(dataRetornoGC)
+			);
         } catch (erro) {
             if (tentativaRegistrada) {
                 await db.execute(`
@@ -6107,6 +6115,18 @@ app.get(
 
 				return 'Não informado';
 			}
+			
+			await gcPrepararHistorico();
+
+			const [baixasConfirmadasGC] = await db.execute(`
+				SELECT entrega_id
+				FROM entregas_gc_baixas
+				WHERE status = 'confirmado'
+			`);
+
+			const entregasConfirmadasGC = new Set(
+				baixasConfirmadasGC.map(baixa => String(baixa.entrega_id))
+			);
 
 			const linhasPedidosConferencia = pedidosConferencia.map(e => `
 				<tr>
@@ -6123,21 +6143,32 @@ app.get(
 					</td>
 
 					<td>
-						<a
-							href="/entregas/${Number(e.id)}/gestaoclick"
-							style="
+						${entregasConfirmadasGC.has(String(e.id)) ? `
+							<span style="
 								display: inline-block;
-								background: #15803d;
-								color: white;
-								padding: 8px 12px;
-								border-radius: 6px;
-								text-decoration: none;
+								color: #4ade80;
 								font-weight: bold;
 								margin-bottom: 6px;
-							"
-						>
-							Confirmar pagamento no GestãoClick
-						</a>
+							">
+								✓ Confirmado no GestãoClick
+							</span>
+						` : `
+							<a
+								href="/entregas/${Number(e.id)}/gestaoclick"
+								style="
+									display: inline-block;
+									background: #15803d;
+									color: white;
+									padding: 8px 12px;
+									border-radius: 6px;
+									text-decoration: none;
+									font-weight: bold;
+									margin-bottom: 6px;
+								"
+							>
+								Confirmar pagamento no GestãoClick
+							</a>
+						`}
 					
 						<form
 							method="post"
