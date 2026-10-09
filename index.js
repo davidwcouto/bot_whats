@@ -5178,17 +5178,18 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 
             let opcoes;
 
-            if (!restantes.length) {
-                opcoes = `
-                    <button name="acao" value="entregue_pago" class="pix">
-                        Entregue
-                    </button>
-
-                    <button name="acao" value="nao_entregue" class="cinza">
-                        Não entregue
-                    </button>
-                `;
-            } else if (contaInvalida) {
+			if (Number(total) === 0) {
+				opcoes = `
+					<button
+						type="submit"
+						name="acao"
+						value="troca"
+						class="pix"
+					>
+						Troca
+					</button>
+				`;
+			} else if (!restantes.length) {
                 opcoes = `
                     <p class="aviso">
                         A loja precisa conferir o cadastro da conta
@@ -5476,6 +5477,7 @@ app.post(
         const acao = String(req.body.acao || '');
 
         const permitidas = [
+			'troca',
             'entregue_pago',
             'pix',
             'dinheiro',
@@ -5566,11 +5568,19 @@ app.post(
                 );
             }
 
-            const acoesGrupo = !restantes.length
-                ? ['entregue_pago', 'nao_entregue']
-                : conta
-                    ? ['conta_prazo', 'nao_entregue', 'recebimento_prazo']
-                    : ['pix', 'dinheiro', 'pix_dinheiro', 'nao_entregue'];
+            const grupoTroca = grupo.every(e =>
+				e.total !== null &&
+				e.total !== undefined &&
+				Number(e.total) === 0
+			);
+
+			const acoesGrupo = grupoTroca
+				? ['troca', 'nao_entregue']
+				: !restantes.length
+					? ['entregue_pago', 'nao_entregue']
+					: conta
+						? ['conta_prazo', 'nao_entregue', 'recebimento_prazo']
+						: ['pix', 'dinheiro', 'pix_dinheiro', 'nao_entregue'];
 
             if (!acoesGrupo.includes(acao)) {
                 throw erroGrupoEntrega(
@@ -5580,7 +5590,16 @@ app.post(
                 );
             }
 
-            if (acao === 'recebimento_prazo') {
+            if (acao === 'troca') {
+				for (const e of grupo) {
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET status_entrega = 'entregue'
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [e.id, codigo]);
+				}
+			} else if (acao === 'recebimento_prazo') {
                 const recebido = centavosEntregas(
                     req.body.dinheiro_prazo
                 );
