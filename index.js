@@ -6152,6 +6152,14 @@ app.get(
 							">
 								✓ Confirmado no GestãoClick
 							</span>
+						` : e.forma_pagamento === 'conta_prazo' ? `
+							<span style="
+								display: inline-block;
+								color: #aaa;
+								margin-bottom: 6px;
+							">
+								Conta a prazo — conferência manual
+							</span>
 						` : `
 							<a
 								href="/entregas/${Number(e.id)}/gestaoclick"
