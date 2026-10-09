@@ -5323,10 +5323,12 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
                         Entrega:
                         <strong>
                             ${
-                                estadosDiferentes
-                                    ? 'Parcial — há pedidos com situações diferentes'
-                                    : escaparHtml(statusEntregaTexto(estado))
-                            }
+								estadosDiferentes
+									? 'Parcial — há pedidos com situações diferentes'
+									: Number(total) === 0 && estado === 'entregue'
+										? 'Troca'
+										: escaparHtml(statusEntregaTexto(estado))
+							}
                         </strong>
                     </p>
 
