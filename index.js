@@ -4376,7 +4376,18 @@ app.post(
 					encodeURIComponent(dataRetornoGC)
 			);
         } catch (erro) {
-            if (tentativaRegistrada) {
+			console.error('❌ Falha na baixa GestãoClick:', {
+				entregaId: String(req.params.id),
+				recebimentoId: recebimentoId || null,
+				lojaId: process.env.GESTAOCLICK_LOJA_ID,
+				formaDinheiroId: process.env.GESTAOCLICK_FORMA_DINHEIRO_ID,
+				formaPixId: process.env.GESTAOCLICK_FORMA_PIX_ID,
+				contaBancariaId: process.env.GESTAOCLICK_CONTA_BANCARIA_ID,
+				tentativaRegistrada,
+				mensagem: erro.message
+			});
+
+			if (tentativaRegistrada) {
                 await db.execute(`
                     UPDATE entregas_gc_baixas
                     SET status = 'conferir'
