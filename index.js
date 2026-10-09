@@ -3891,6 +3891,38 @@ async function gcListar(caminho, parametros) {
 }
 
 function gcPagamento(entrega) {
+	    if (
+			entrega.total !== null &&
+			entrega.total !== undefined &&
+			Number(entrega.total) === 0
+		) {
+			if (entrega.status_entrega !== 'entregue') {
+				throw new Error(
+					'O motoboy precisa confirmar a troca antes da baixa.'
+				);
+			}
+
+			const pix = gcCentavos(entrega.valor_recebido_pix ?? 0);
+			const dinheiro = gcCentavos(
+				entrega.valor_recebido_dinheiro ?? 0
+			);
+			const abatimento = gcCentavos(
+				entrega.dinheiro_conta_prazo ?? 0
+			);
+
+			if (pix > 0 || dinheiro > 0 || abatimento > 0) {
+				throw new Error(
+					'Esta troca tem valores recebidos. ' +
+					'Confira esses valores no GestãoClick antes de encerrar.'
+				);
+			}
+
+			return {
+				total: 0,
+				modo: 'Troca'
+			};
+		}
+		
     if (
         entrega.forma_pagamento === 'conta_prazo' ||
         Number(entrega.cliente_conta_prazo_id) > 0 ||
@@ -4057,9 +4089,32 @@ async function gcConferir(id) {
         );
     }
 
-    const formaId = pagamento.modo === 'PIX'
-        ? config.GESTAOCLICK_FORMA_PIX_ID
-        : config.GESTAOCLICK_FORMA_DINHEIRO_ID;
+    let formaId;
+
+	if (pagamento.modo === 'Troca') {
+		if (String(recebimento.forma_pagamento_id) !== '6359000') {
+			throw new Error(
+				'O recebimento zerado não está como Devolução de Mercadorias. ' +
+				'Confira no GestãoClick.'
+			);
+		}
+
+		if (
+			String(recebimento.conta_bancaria_id) !==
+			config.GESTAOCLICK_CONTA_BANCARIA_ID
+		) {
+			throw new Error(
+				'A conta do recebimento difere da conta configurada. ' +
+				'Confira no GestãoClick.'
+			);
+		}
+
+		formaId = String(recebimento.forma_pagamento_id);
+	} else {
+		formaId = pagamento.modo === 'PIX'
+			? config.GESTAOCLICK_FORMA_PIX_ID
+			: config.GESTAOCLICK_FORMA_DINHEIRO_ID;
+	}
 
     return { entrega, pagamento, venda, recebimento, formaId, config };
 }
