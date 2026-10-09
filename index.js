@@ -4092,9 +4092,9 @@ async function gcConferir(id) {
     let formaId;
 
 	if (pagamento.modo === 'Troca') {
-		if (String(recebimento.forma_pagamento_id) !== '6359000') {
+		if (!String(recebimento.forma_pagamento_id || '').trim()) {
 			throw new Error(
-				'O recebimento zerado não está como Devolução de Mercadorias. ' +
+				'O recebimento não possui forma de pagamento. ' +
 				'Confira no GestãoClick.'
 			);
 		}
