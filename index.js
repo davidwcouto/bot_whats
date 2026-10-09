@@ -7355,7 +7355,7 @@ app.get('/api/comprovantes-infinitepay/pendentes', async (req, res) => {
 
 
 // ======================================================
-// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADO
+// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADOO
 // ======================================================
 
 app.post('/api/comprovantes-infinitepay/:id/processado', async (req, res) => {
