@@ -5546,7 +5546,7 @@ app.post(
 
         const permitidas = [
 			'troca',
-			'troca_pagamento'
+			'troca_pagamento',
             'entregue_pago',
             'pix',
             'dinheiro',
