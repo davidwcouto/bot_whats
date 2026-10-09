@@ -5313,13 +5313,33 @@ app.get('/entregas/motoboy/:codigo', async (req, res) => {
 					</button>
 				`;
 			} else if (!restantes.length) {
-                opcoes = `
-                    <p class="aviso">
-                        A loja precisa conferir o cadastro da conta
-                        a prazo antes de alterar esta entrega.
-                    </p>
-                `;
-            } else if (contaAtiva) {
+				opcoes = `
+					<button
+						type="submit"
+						name="acao"
+						value="entregue_pago"
+						class="pix"
+					>
+						Entregue
+					</button>
+
+					<button
+						type="submit"
+						name="acao"
+						value="nao_entregue"
+						class="cinza"
+					>
+						Não entregue
+					</button>
+				`;
+			} else if (contaInvalida) {
+				opcoes = `
+					<p class="aviso">
+						A loja precisa conferir o cadastro da conta
+						a prazo antes de alterar esta entrega.
+					</p>
+				`;
+			} else if (contaAtiva) {
                 opcoes = opcoesEntregaPrazo({
                     ...primeiro,
                     dinheiro_conta_prazo: dinheiroSaldo / 100
