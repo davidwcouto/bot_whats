@@ -4288,6 +4288,8 @@ app.post(
                     throw new Error(`Recebimento sem ${campo}.`);
                 }
             }
+			
+			corpo.loja_id = dados.config.GESTAOCLICK_LOJA_ID;
 
             corpo.forma_pagamento_id = dados.formaId;
             corpo.conta_bancaria_id =
@@ -4329,16 +4331,17 @@ app.post(
             tentativaRegistrada = true;
 
             await gcApi(
-                'PUT',
-                `/recebimentos/${encodeURIComponent(recebimentoId)}`,
-                {},
-                corpo
-            );
+				'PUT',
+				`/recebimentos/${encodeURIComponent(recebimentoId)}`,
+				{ loja_id: dados.config.GESTAOCLICK_LOJA_ID },
+				corpo
+			);
 
             const verificacao = await gcApi(
-                'GET',
-                `/recebimentos/${encodeURIComponent(recebimentoId)}`
-            );
+				'GET',
+				`/recebimentos/${encodeURIComponent(recebimentoId)}`,
+				{ loja_id: dados.config.GESTAOCLICK_LOJA_ID }
+			);
 
             const confirmado = verificacao.data;
 
