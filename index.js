@@ -6220,6 +6220,15 @@ app.get(
 			`, [data]);
 			
 			function pagamentoNaConferencia(entrega) {
+				if (
+					e.total !== null &&
+					e.total !== undefined &&
+					Number(e.total) === 0 &&
+					e.status_entrega === 'entregue'
+				) {
+					return 'Troca';
+				}
+			
 				if (pixConfirmadoPeloAtendente(entrega)) {
 					return 'PIX — confirmado pelo atendente';
 				}
