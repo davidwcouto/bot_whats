@@ -6221,10 +6221,10 @@ app.get(
 			
 			function pagamentoNaConferencia(entrega) {
 				if (
-					e.total !== null &&
-					e.total !== undefined &&
-					Number(e.total) === 0 &&
-					e.status_entrega === 'entregue'
+					entrega.total !== null &&
+					entrega.total !== undefined &&
+					Number(entrega.total) === 0 &&
+					entrega.status_entrega === 'entregue'
 				) {
 					return 'Troca';
 				}
