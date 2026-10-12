@@ -426,7 +426,7 @@ Digite 2️⃣ para atendimento.`;
 
 const horarioAtendimento = {
     inicio: 9,        // 09:00
-    fim: 10,          // 18:00
+    fim: 18,          // 18:00
     minutosFim: 00,   // Até 18:30
     intervaloInicio: 12,   // Início do intervalo de não atendimento
     intervaloFim: 12,     // Fim do intervalo de não atendimento
@@ -1243,7 +1243,7 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
         removerClientesAtendidos(chatId);
 
       } else {
-			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo devido ao feriado de Nossa Senhora Aparecida. Retornaremos ao atendimento normal amanha dia 13/10.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
+			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
 		}
         return;
     }
@@ -1316,7 +1316,7 @@ if (!clientesAtendidos.has(chatId)) {
         removerClientesAtendidos(chatId);
 		
       } else {
-			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo devido ao feriado de Nossa Senhora Aparecida. Retornaremos ao atendimento normal amanha dia 13/10.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
+            await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
 		}
         return;
     }
