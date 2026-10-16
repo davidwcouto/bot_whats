@@ -6012,6 +6012,529 @@ app.post(
 );
 
 // ======================================================
+// CONFERÊNCIA POR CLIENTE E COMPROVANTES DA LOJA
+// ======================================================
+
+let tabelaComprovantesRotaPronta = null;
+
+function prepararComprovantesRota() {
+    if (!tabelaComprovantesRotaPronta) {
+        tabelaComprovantesRotaPronta = db.execute(`
+            CREATE TABLE IF NOT EXISTS entregas_comprovantes_loja (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                entrega_id INT NOT NULL,
+                pedidos_ids TEXT NOT NULL,
+                nome VARCHAR(255) NOT NULL,
+                tipo VARCHAR(50) NOT NULL,
+                arquivo MEDIUMBLOB NOT NULL,
+                criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_comprovante_entrega (entrega_id)
+            )
+        `).catch(erro => {
+            tabelaComprovantesRotaPronta = null;
+            throw erro;
+        });
+    }
+
+    return tabelaComprovantesRotaPronta;
+}
+
+const receberComprovanteRota = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+        fields: 3,
+        parts: 4
+    }
+}).single('comprovante');
+
+function tipoComprovanteRota(buffer) {
+    if (
+        buffer.length >= 5 &&
+        buffer.subarray(0, 5).toString() === '%PDF-'
+    ) {
+        return 'application/pdf';
+    }
+
+    if (
+        buffer.length >= 3 &&
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff
+    ) {
+        return 'image/jpeg';
+    }
+
+    if (
+        buffer.length >= 8 &&
+        buffer.subarray(0, 8).equals(
+            Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+        )
+    ) {
+        return 'image/png';
+    }
+
+    if (
+        buffer.length >= 12 &&
+        buffer.subarray(0, 4).toString() === 'RIFF' &&
+        buffer.subarray(8, 12).toString() === 'WEBP'
+    ) {
+        return 'image/webp';
+    }
+
+    return null;
+}
+
+async function buscarGrupoConferenciaLoja(id) {
+    if (!/^\d+$/.test(String(id))) {
+        return null;
+    }
+
+    const [encontradas] = await db.execute(`
+        SELECT *,
+            DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+        FROM entregas_motoboy
+        WHERE id = ?
+    `, [id]);
+
+    const entrega = encontradas[0];
+
+    if (!entrega) {
+        return null;
+    }
+
+    const [rota] = await db.execute(`
+        SELECT *,
+            DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+        FROM entregas_motoboy
+        WHERE data_rota = ?
+          AND horario_rota = ?
+          AND motoboy = ?
+        ORDER BY id
+    `, [
+        entrega.dia_grupo,
+        entrega.horario_rota,
+        entrega.motoboy
+    ]);
+
+    const chave = chaveGrupoEntrega(entrega);
+
+    return rota.filter(e => chaveGrupoEntrega(e) === chave);
+}
+
+app.get(
+    '/entregas/conferencia/rota',
+    autenticarEntregas,
+    async (req, res) => {
+        const data = String(req.query.data || hojeEntregas());
+        const horario = String(req.query.horario || '');
+        const motoboy = String(req.query.motoboy || '');
+
+        if (
+            !dataValidaEntregas(data) ||
+            !/^\d{2}:\d{2}$/.test(horario) ||
+            !motoboy ||
+            motoboy.length > 100
+        ) {
+            return res.status(400).send('Rota inválida.');
+        }
+
+        try {
+            await prepararComprovantesRota();
+
+            const [entregas] = await db.execute(`
+                SELECT *,
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                  AND horario_rota = ?
+                  AND motoboy = ?
+                ORDER BY id DESC
+            `, [data, horario, motoboy]);
+
+            // Não carrega os arquivos nesta consulta, apenas seus dados.
+            const [comprovantes] = await db.execute(`
+                SELECT
+                    c.id,
+                    c.entrega_id,
+                    c.pedidos_ids,
+                    c.nome
+                FROM entregas_comprovantes_loja c
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM entregas_motoboy e
+                    WHERE e.data_rota = ?
+                      AND e.horario_rota = ?
+                      AND e.motoboy = ?
+                      AND JSON_CONTAINS(
+                          c.pedidos_ids,
+                          JSON_QUOTE(CAST(e.id AS CHAR))
+                      )
+                )
+                ORDER BY c.id DESC
+            `, [data, horario, motoboy]);
+
+            const grupos = agruparEntregasMotoboy(entregas);
+
+            const cartoes = grupos.map(grupo => {
+                const primeiro = grupo[0];
+                const ids = new Set(grupo.map(e => String(e.id)));
+
+                let total = 0;
+                let pix = 0;
+                let dinheiro = 0;
+                let prazo = 0;
+                let abater = 0;
+                let pendente = 0;
+
+                for (const e of grupo) {
+                    const valor = centavosGrupo(e.total);
+                    total += valor;
+                    abater += centavosGrupo(e.dinheiro_conta_prazo);
+
+                    if (
+                        pixConfirmadoPeloAtendente(e) ||
+                        e.forma_pagamento === 'pix'
+                    ) {
+                        pix += valor;
+                    } else if (e.forma_pagamento === 'dinheiro') {
+                        const recebidoPix = centavosGrupo(
+                            e.valor_recebido_pix
+                        );
+                        const recebidoDinheiro = centavosGrupo(
+                            e.valor_recebido_dinheiro ?? e.total
+                        );
+
+                        pix += recebidoPix;
+                        dinheiro += recebidoDinheiro;
+
+                        if (e.status_entrega !== 'nao_entregue') {
+                            pendente += Math.max(
+                                0,
+                                valor - recebidoPix - recebidoDinheiro
+                            );
+                        }
+                    } else if (
+                        e.forma_pagamento === 'conta_prazo' &&
+                        e.status_entrega === 'entregue'
+                    ) {
+                        prazo += valor;
+                    } else if (e.status_entrega !== 'nao_entregue') {
+                        pendente += valor;
+                    }
+                }
+
+                const todosEntregues = grupo.every(
+                    e => e.status_entrega === 'entregue'
+                );
+                const nenhumEntregue = grupo.every(
+                    e => e.status_entrega === 'nao_entregue'
+                );
+
+                const situacao = todosEntregues
+                    ? (total === 0 ? 'Troca entregue' : 'Entregue')
+                    : nenhumEntregue
+                        ? 'Não entregue'
+                        : 'Pendente ou parcialmente entregue';
+
+                const classe = todosEntregues
+                    ? 'entregue'
+                    : nenhumEntregue
+                        ? 'nao_entregue'
+                        : '';
+
+                const coletas = grupo
+                    .map(e => String(e.coletar || '').trim())
+                    .filter(Boolean)
+                    .join(' — ');
+
+                const anexos = comprovantes.filter(c => {
+                    const vinculados = JSON.parse(c.pedidos_ids);
+                    return vinculados.some(id => ids.has(String(id)));
+                });
+
+                const listaAnexos = anexos.length
+                    ? anexos.map(c => `
+                        <li>
+                            <a
+                                href="/entregas/comprovantes-loja/${Number(c.id)}"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                ${escaparHtml(c.nome)}
+                            </a>
+                        </li>
+                    `).join('')
+                    : '<li>Nenhum comprovante anexado.</li>';
+
+                return `
+                    <article
+                        id="cliente-${Number(primeiro.id)}"
+                        class="${classe}"
+                    >
+                        <h2>${escaparHtml(primeiro.cliente)}</h2>
+
+                        <p>
+                            Pedidos:
+                            ${grupo.map(e =>
+                                escaparHtml(e.pedido || '—')
+                            ).join(', ')}
+                        </p>
+
+                        <p>
+                            ${escaparHtml(primeiro.endereco || '')}
+                            <br>
+                            ${escaparHtml(primeiro.cidade || '')}
+                        </p>
+
+                        <p>Entrega: <strong>${situacao}</strong></p>
+
+                        <div class="valores-conferencia-loja">
+                            <p>
+                                Total dos pedidos<br>
+                                <strong>${moedaEntregas(total / 100)}</strong>
+                            </p>
+                            <p>
+                                PIX informado<br>
+                                <strong>${moedaEntregas(pix / 100)}</strong>
+                            </p>
+                            <p>
+                                Dinheiro dos pedidos<br>
+                                <strong>${moedaEntregas(dinheiro / 100)}</strong>
+                            </p>
+                            <p>
+                                Conta a prazo<br>
+                                <strong>${moedaEntregas(prazo / 100)}</strong>
+                            </p>
+                            <p>
+                                Dinheiro para abater saldo<br>
+                                <strong>${moedaEntregas(abater / 100)}</strong>
+                            </p>
+                            <p style="${pendente > 0 ? 'color:#ff4d4f;' : ''}">
+                                Sem marcação<br>
+                                <strong>${moedaEntregas(pendente / 100)}</strong>
+                            </p>
+                        </div>
+
+                        ${coletas ? `
+                            <p>
+                                Peças para coletar:
+                                <strong style="color:#ff4d4f;">
+                                    ${escaparHtml(coletas)}
+                                </strong>
+                            </p>
+                        ` : ''}
+
+                        <h3>Comprovantes anexados</h3>
+                        <ul>${listaAnexos}</ul>
+
+                        <form
+                            method="post"
+                            enctype="multipart/form-data"
+                            action="/entregas/conferencia/cliente/${Number(primeiro.id)}/comprovante"
+                        >
+                            ${csrfEntregaCampo()}
+
+                            <label for="arquivo-${Number(primeiro.id)}">
+                                Anexar comprovante — até 5 MB
+                            </label>
+
+                            <input
+                                id="arquivo-${Number(primeiro.id)}"
+                                type="file"
+                                name="comprovante"
+                                accept=".jpg,.jpeg,.png,.webp,.pdf"
+                                required
+                            >
+
+                            <button type="submit" style="margin-top:12px;">
+                                Salvar comprovante
+                            </button>
+                        </form>
+                    </article>
+                `;
+            }).join('');
+
+            res.set('Cache-Control', 'no-store');
+
+            res.send(paginaEntregas('Conferência da rota', `
+                <style>
+                    .valores-conferencia-loja {
+                        display: grid;
+                        grid-template-columns:
+                            repeat(auto-fit, minmax(180px, 1fr));
+                        gap: 8px 20px;
+                    }
+
+                    .valores-conferencia-loja strong {
+                        display: inline-block;
+                        margin-top: 6px;
+                        font-size: 22px;
+                    }
+
+                    article input[type="file"] {
+                        width: 100%;
+                        min-width: 0;
+                    }
+
+                    article li {
+                        margin-bottom: 10px;
+                        overflow-wrap: anywhere;
+                    }
+                </style>
+
+                <section>
+                    <h2>Rota das ${escaparHtml(horario)}</h2>
+                    <p>
+                        ${escaparHtml(motoboy)} ·
+                        ${data.split('-').reverse().join('/')}
+                    </p>
+
+                    <p class="aviso">
+                        Os valores refletem os registros das entregas.
+                        Anexar comprovante não confirma o pagamento.
+                    </p>
+
+                    <a href="/entregas/conferencia?data=${encodeURIComponent(data)}">
+                        Voltar à conferência
+                    </a>
+                </section>
+
+                ${cartoes || '<section>Nenhuma entrega nesta rota.</section>'}
+            `));
+        } catch (erro) {
+            console.error(
+                'Erro na conferência por cliente:',
+                erro.message
+            );
+
+            res.status(500).send('Não foi possível abrir a rota.');
+        }
+    }
+);
+
+app.post(
+    '/entregas/conferencia/cliente/:id/comprovante',
+    autenticarEntregas,
+    (req, res, next) => {
+        receberComprovanteRota(req, res, erro => {
+            if (erro) {
+                return res.status(400).send(
+                    erro.code === 'LIMIT_FILE_SIZE'
+                        ? 'O arquivo excede 5 MB. Volte e escolha um arquivo menor.'
+                        : 'Não foi possível receber o arquivo. Envie um comprovante por vez.'
+                );
+            }
+
+            next();
+        });
+    },
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            if (!req.file?.buffer?.length) {
+                return res.status(400).send('Selecione um comprovante.');
+            }
+
+            const tipo = tipoComprovanteRota(req.file.buffer);
+
+            if (!tipo) {
+                return res.status(400).send(
+                    'Formato não permitido. Use JPG, PNG, WEBP ou PDF.'
+                );
+            }
+
+            const grupo = await buscarGrupoConferenciaLoja(req.params.id);
+
+            if (!grupo?.length) {
+                return res.status(404).send('Entrega não encontrada.');
+            }
+
+            await prepararComprovantesRota();
+
+            const nome = String(req.file.originalname || 'Comprovante')
+                .replace(/[\x00-\x1f\x7f]/g, '')
+                .slice(0, 255);
+
+            await db.execute(`
+                INSERT INTO entregas_comprovantes_loja (
+                    entrega_id,
+                    pedidos_ids,
+                    nome,
+                    tipo,
+                    arquivo
+                )
+                VALUES (?, ?, ?, ?, ?)
+            `, [
+                req.params.id,
+                JSON.stringify(grupo.map(e => String(e.id))),
+                nome,
+                tipo,
+                req.file.buffer
+            ]);
+
+            const primeiro = grupo[0];
+
+            const destino =
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + Math.max(...grupo.map(e => Number(e.id)));
+
+            return res.redirect(303, destino);
+        } catch (erro) {
+            console.error('Erro ao salvar comprovante:', erro.message);
+
+            return res.status(500).send(
+                'Não foi possível confirmar o salvamento. ' +
+                'Volte à rota e confira a lista de comprovantes antes de tentar novamente.'
+            );
+        }
+    }
+);
+
+app.get(
+    '/entregas/comprovantes-loja/:id',
+    autenticarEntregas,
+    async (req, res) => {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(400).send('Comprovante inválido.');
+        }
+
+        try {
+            await prepararComprovantesRota();
+
+            const [registros] = await db.execute(`
+                SELECT tipo, arquivo
+                FROM entregas_comprovantes_loja
+                WHERE id = ?
+            `, [req.params.id]);
+
+            const comprovante = registros[0];
+
+            if (!comprovante) {
+                return res.status(404).send('Comprovante não encontrado.');
+            }
+
+            res.set({
+                'Content-Type': comprovante.tipo,
+                'Content-Disposition': 'inline',
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "sandbox; default-src 'none'"
+            });
+
+            return res.send(comprovante.arquivo);
+        } catch (erro) {
+            console.error('Erro ao abrir comprovante:', erro.message);
+            return res.status(500).send('Não foi possível abrir o comprovante.');
+        }
+    }
+);
+
+// ======================================================
 // CONFERÊNCIA DA LOJA
 // ======================================================
 
@@ -6286,7 +6809,25 @@ app.get(
 					<td style="min-width: 180px; max-width: 300px;">
 						${mostrarColetasResumo(r)}
 					</td>
-					<td>${botoesConferencia(r)}</td>
+					<td>
+						${botoesConferencia(r)}
+
+						<a
+							href="/entregas/conferencia/rota?data=${encodeURIComponent(data)}&horario=${encodeURIComponent(r.horario_rota)}&motoboy=${encodeURIComponent(r.motoboy)}"
+							style="
+								display: inline-block;
+								margin-top: 12px;
+								padding: 9px 12px;
+								background: #444;
+								color: white;
+								border-radius: 7px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Conferir clientes e comprovantes
+						</a>
+					</td>
                 </tr>
             `).join('');
 			
