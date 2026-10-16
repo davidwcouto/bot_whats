@@ -6176,9 +6176,81 @@ app.get(
             `, [data, horario, motoboy]);
 
             const grupos = agruparEntregasMotoboy(entregas);
+			
+			await gcPrepararHistorico();
+
+			const [baixasDaRota] = await db.execute(`
+				SELECT b.entrega_id, b.status
+				FROM entregas_gc_baixas b
+				INNER JOIN entregas_motoboy e
+					ON e.id = b.entrega_id
+				WHERE e.data_rota = ?
+				  AND e.horario_rota = ?
+				  AND e.motoboy = ?
+			`, [data, horario, motoboy]);
+
+			const statusBaixasRota = new Map();
+
+			for (const baixa of baixasDaRota) {
+				const id = String(baixa.entrega_id);
+
+				if (statusBaixasRota.get(id) !== 'confirmado') {
+					statusBaixasRota.set(id, baixa.status);
+				}
+			}
 
             const cartoes = grupos.map(grupo => {
                 const primeiro = grupo[0];
+				
+				const botoesGestaoClick = grupo.map(e => {
+					const pedido = escaparHtml(e.pedido || String(e.id));
+					const statusBaixa = statusBaixasRota.get(String(e.id));
+
+					if (statusBaixa === 'confirmado') {
+						return `
+							<p style="color:#4ade80; font-weight:bold;">
+								✓ Pedido ${pedido}: pagamento confirmado no GestãoClick
+							</p>
+						`;
+					}
+
+					if (statusBaixa) {
+						return `
+							<p style="color:#f1c40f;">
+								Pedido ${pedido}: existe uma tentativa registrada.
+								Confira o resultado no GestãoClick antes de tentar novamente.
+							</p>
+						`;
+					}
+
+					if (e.forma_pagamento === 'conta_prazo') {
+						return `
+							<p style="color:#ccc;">
+								Pedido ${pedido}: conta a prazo — conferência manual.
+							</p>
+						`;
+					}
+
+					return `
+						<a
+							href="/entregas/${Number(e.id)}/gestaoclick"
+							style="
+								display: inline-block;
+								padding: 12px 16px;
+								margin: 6px 8px 6px 0;
+								background: #15803d;
+								color: white;
+								border-radius: 8px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Confirmar pagamento no GestãoClick
+							${grupo.length > 1 ? '— Pedido ' + pedido : ''}
+						</a>
+					`;
+				}).join('');
+
                 const ids = new Set(grupo.map(e => String(e.id)));
 
                 let total = 0;
@@ -6326,7 +6398,11 @@ app.get(
                             </p>
                         ` : ''}
 
-                        <h3>Comprovantes anexados</h3>
+                        <div style="margin: 20px 0;">
+							${botoesGestaoClick}
+						</div>
+
+						<h3>Comprovantes anexados</h3>
                         <ul>${listaAnexos}</ul>
 
                         <form
