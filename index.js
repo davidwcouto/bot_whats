@@ -6358,13 +6358,11 @@ app.get(
                         ? 'Não entregue'
                         : 'Pendente ou parcialmente entregue';
 
-                const revisaoPagamento = revisaoPagamentoLoja(grupo);
-
-				const pagamentoConfirmadoLoja = grupo.every(
-					e => confirmacoesPagamentoLoja.get(String(e.id)) === revisaoPagamento
+                const pagamentoConfirmadoGC = grupo.every(
+					e => statusBaixasRota.get(String(e.id)) === 'confirmado'
 				);
 
-				const classe = pagamentoConfirmadoLoja ? 'entregue' : '';
+				const classe = pagamentoConfirmadoGC ? 'entregue' : '';
 
                 const coletas = grupo
                     .map(e => String(e.coletar || '').trim())
@@ -6451,36 +6449,6 @@ app.get(
                         <div style="margin: 20px 0;">
 							${botoesGestaoClick}
 						</div>
-						
-						<form
-							method="post"
-							action="/entregas/conferencia/cliente/${Number(primeiro.id)}/confirmar-pagamento"
-							style="margin: 18px 0;"
-						>
-							${csrfEntregaCampo()}
-
-							<input
-								type="hidden"
-								name="revisao"
-								value="${revisaoPagamento}"
-							>
-
-							<button
-								type="submit"
-								${pagamentoConfirmadoLoja ? 'disabled' : ''}
-								style="
-									width: auto;
-									padding: 12px 18px;
-									background: ${pagamentoConfirmadoLoja ? '#15803d' : '#555'};
-									color: white;
-									cursor: ${pagamentoConfirmadoLoja ? 'default' : 'pointer'};
-								"
-							>
-								${pagamentoConfirmadoLoja
-									? '✓ Pagamento confirmado'
-									: 'Pagamento confirmado'}
-							</button>
-						</form>
 
 						<h3>Comprovantes anexados</h3>
                         <ul>${listaAnexos}</ul>
