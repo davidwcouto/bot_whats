@@ -6571,9 +6571,6 @@ app.get(
                         Anexar comprovante não confirma o pagamento.
                     </p>
 
-                    <a href="/entregas/conferencia?data=${encodeURIComponent(data)}">
-                        Voltar à conferência
-                    </a>
                 </section>
 
                 ${cartoes || '<section>Nenhuma entrega nesta rota.</section>'}
