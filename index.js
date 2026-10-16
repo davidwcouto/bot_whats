@@ -4384,8 +4384,10 @@ app.post(
 
 			return res.redirect(
 				303,
-				'/entregas/conferencia?data=' +
-					encodeURIComponent(dataRetornoGC)
+				'/entregas/conferencia/rota' +
+					'?data=' + encodeURIComponent(dataRetornoGC) +
+					'&horario=' + encodeURIComponent(dados.entrega.horario_rota) +
+					'&motoboy=' + encodeURIComponent(dados.entrega.motoboy)
 			);
         } catch (erro) {
 			console.error('❌ Falha na baixa GestãoClick:', {
