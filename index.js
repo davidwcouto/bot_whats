@@ -6135,6 +6135,24 @@ async function buscarGrupoConferenciaLoja(id) {
     return rota.filter(e => chaveGrupoEntrega(e) === chave);
 }
 
+async function prepararConfirmacaoPagamentoLoja() {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS entregas_pagamentos_conferidos (
+            entrega_id INT NOT NULL PRIMARY KEY,
+            revisao CHAR(64) NOT NULL,
+            confirmado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+}
+
+function revisaoPagamentoLoja(grupo) {
+    const ordenados = [...grupo].sort(
+        (a, b) => Number(a.id) - Number(b.id)
+    );
+
+    return revisaoGrupoEntrega(ordenados);
+}
+
 app.get(
     '/entregas/conferencia/rota',
     autenticarEntregas,
@@ -6188,6 +6206,24 @@ app.get(
             `, [data, horario, motoboy]);
 
             const grupos = agruparEntregasMotoboy(entregas);
+			
+			await prepararConfirmacaoPagamentoLoja();
+
+			const [pagamentosConferidos] = await db.execute(`
+				SELECT c.entrega_id, c.revisao
+				FROM entregas_pagamentos_conferidos c
+				INNER JOIN entregas_motoboy e ON e.id = c.entrega_id
+				WHERE e.data_rota = ?
+				  AND e.horario_rota = ?
+				  AND e.motoboy = ?
+			`, [data, horario, motoboy]);
+
+			const confirmacoesPagamentoLoja = new Map(
+				pagamentosConferidos.map(c => [
+					String(c.entrega_id),
+					c.revisao
+				])
+			);
 			
 			await gcPrepararHistorico();
 
@@ -6322,11 +6358,13 @@ app.get(
                         ? 'Não entregue'
                         : 'Pendente ou parcialmente entregue';
 
-                const classe = todosEntregues
-                    ? 'entregue'
-                    : nenhumEntregue
-                        ? 'nao_entregue'
-                        : '';
+                const revisaoPagamento = revisaoPagamentoLoja(grupo);
+
+				const pagamentoConfirmadoLoja = grupo.every(
+					e => confirmacoesPagamentoLoja.get(String(e.id)) === revisaoPagamento
+				);
+
+				const classe = pagamentoConfirmadoLoja ? 'entregue' : '';
 
                 const coletas = grupo
                     .map(e => String(e.coletar || '').trim())
@@ -6413,6 +6451,36 @@ app.get(
                         <div style="margin: 20px 0;">
 							${botoesGestaoClick}
 						</div>
+						
+						<form
+							method="post"
+							action="/entregas/conferencia/cliente/${Number(primeiro.id)}/confirmar-pagamento"
+							style="margin: 18px 0;"
+						>
+							${csrfEntregaCampo()}
+
+							<input
+								type="hidden"
+								name="revisao"
+								value="${revisaoPagamento}"
+							>
+
+							<button
+								type="submit"
+								${pagamentoConfirmadoLoja ? 'disabled' : ''}
+								style="
+									width: auto;
+									padding: 12px 18px;
+									background: ${pagamentoConfirmadoLoja ? '#15803d' : '#555'};
+									color: white;
+									cursor: ${pagamentoConfirmadoLoja ? 'default' : 'pointer'};
+								"
+							>
+								${pagamentoConfirmadoLoja
+									? '✓ Pagamento confirmado'
+									: 'Pagamento confirmado'}
+							</button>
+						</form>
 
 						<h3>Comprovantes anexados</h3>
                         <ul>${listaAnexos}</ul>
@@ -6618,6 +6686,73 @@ app.get(
         } catch (erro) {
             console.error('Erro ao abrir comprovante:', erro.message);
             return res.status(500).send('Não foi possível abrir o comprovante.');
+        }
+    }
+);
+
+app.post(
+    '/entregas/conferencia/cliente/:id/confirmar-pagamento',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            const grupo = await buscarGrupoConferenciaLoja(req.params.id);
+
+            if (!grupo?.length) {
+                return res.status(404).send('Entrega não encontrada.');
+            }
+
+            const revisao = revisaoPagamentoLoja(grupo);
+
+            if (req.body.revisao !== revisao) {
+                return res.status(409).send(
+                    'Os dados deste cliente mudaram. ' +
+                    'Volte, atualize a página e confira novamente.'
+                );
+            }
+
+            await prepararConfirmacaoPagamentoLoja();
+
+            const valores = grupo.map(() => '(?, ?)').join(', ');
+            const parametros = grupo.flatMap(e => [
+                e.id,
+                revisao
+            ]);
+
+            await db.execute(`
+                INSERT INTO entregas_pagamentos_conferidos (
+                    entrega_id,
+                    revisao
+                )
+                VALUES ${valores}
+                ON DUPLICATE KEY UPDATE
+                    revisao = VALUES(revisao),
+                    confirmado_em = CURRENT_TIMESTAMP
+            `, parametros);
+
+            const primeiro = grupo[0];
+            const idCartao = Math.max(
+                ...grupo.map(e => Number(e.id))
+            );
+
+            return res.redirect(
+                303,
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + idCartao
+            );
+        } catch (erro) {
+            console.error(
+                'Erro ao confirmar pagamento na conferência:',
+                erro.message
+            );
+
+            return res.status(500).send(
+                'Não foi possível confirmar a gravação. ' +
+                'Volte e atualize a página para conferir.'
+            );
         }
     }
 );
