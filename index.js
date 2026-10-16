@@ -6533,7 +6533,34 @@ app.get(
                 </style>
 
                 <section>
-                    <h2>Rota das ${escaparHtml(horario)}</h2>
+                    <div style="
+						display: flex;
+						justify-content: space-between;
+						align-items: center;
+						flex-wrap: wrap;
+						gap: 12px;
+						margin-bottom: 16px;
+					">
+						<h2 style="margin: 0;">
+							Rota das ${escaparHtml(horario)}
+						</h2>
+
+						<a
+							href="/entregas/conferencia?data=${encodeURIComponent(data)}"
+							style="
+								display: inline-block;
+								margin-left: auto;
+								padding: 10px 16px;
+								background: #444;
+								color: white;
+								border-radius: 8px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							← Voltar à conferência
+						</a>
+					</div>
                     <p>
                         ${escaparHtml(motoboy)} ·
                         ${data.split('-').reverse().join('/')}
