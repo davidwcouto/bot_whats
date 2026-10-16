@@ -6497,12 +6497,23 @@ app.get(
                             </label>
 
                             <input
-                                id="arquivo-${Number(primeiro.id)}"
-                                type="file"
-                                name="comprovante"
-                                accept=".jpg,.jpeg,.png,.webp,.pdf"
-                                required
-                            >
+								id="arquivo-${Number(primeiro.id)}"
+								type="file"
+								name="comprovante"
+								accept=".jpg,.jpeg,.png,.webp,.pdf"
+								required
+								onchange="
+									if (!this.files.length) return;
+
+									if (this.files[0].size > 5 * 1024 * 1024) {
+										alert('O comprovante deve ter no máximo 5 MB.');
+										this.value = '';
+										return;
+									}
+
+									this.form.requestSubmit();
+								"
+							>
 
                             <button type="submit" style="margin-top:12px;">
                                 Salvar comprovante
