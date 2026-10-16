@@ -7014,23 +7014,7 @@ app.get(
 							">
 								Conta a prazo — conferência manual
 							</span>
-						` : `
-							<a
-								href="/entregas/${Number(e.id)}/gestaoclick"
-								style="
-									display: inline-block;
-									background: #15803d;
-									color: white;
-									padding: 8px 12px;
-									border-radius: 6px;
-									text-decoration: none;
-									font-weight: bold;
-									margin-bottom: 6px;
-								"
-							>
-								Confirmar pagamento no GestãoClick
-							</a>
-						`}
+						` : ``}
 					
 						<form
 							method="post"
