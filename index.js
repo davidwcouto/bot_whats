@@ -6515,9 +6515,6 @@ app.get(
 								"
 							>
 
-                            <button type="submit" style="margin-top:12px;">
-                                Salvar comprovante
-                            </button>
                         </form>
                     </article>
                 `;
