@@ -4145,7 +4145,19 @@ function gcPagina(res, mensagem, conteudo = '') {
         <section>
             <h2>${escaparHtml(mensagem)}</h2>
             ${conteudo}
-            <p><a href="/entregas/painel">Voltar ao painel</a></p>
+            <p>
+				<a
+					href="/entregas/painel"
+					onclick="
+						if (window.history.length > 1) {
+							event.preventDefault();
+							window.history.back();
+						}
+					"
+				>
+					Voltar à página anterior
+				</a>
+			</p>
         </section>
     `));
 }
