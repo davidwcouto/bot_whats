@@ -6552,22 +6552,6 @@ app.get(
 							<h2 style="margin: 0;">
 								Rota das ${escaparHtml(horario)}
 							</h2>
-
-							<a
-								href="/entregas/conferencia?data=${encodeURIComponent(data)}"
-								style="
-									display: inline-block;
-									margin-left: auto;
-									padding: 10px 16px;
-									background: #444;
-									color: white;
-									border-radius: 8px;
-									text-decoration: none;
-									font-weight: bold;
-								"
-							>
-								← Voltar à conferência
-							</a>
 						</div>
 
 					</div>
