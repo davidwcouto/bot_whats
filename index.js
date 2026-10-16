@@ -4382,12 +4382,34 @@ app.post(
 						.toISODate()
 					: String(dados.entrega.data_rota).slice(0, 10);
 
+			// Localiza o cartão do cliente, inclusive com pedidos agrupados.
+			// Uma falha nesta consulta não altera a baixa já confirmada.
+			let idCartaoRetornoGC = Number(dados.entrega.id);
+
+			try {
+				const grupoRetornoGC = await buscarGrupoConferenciaLoja(
+					dados.entrega.id
+				);
+
+				if (grupoRetornoGC?.length) {
+					idCartaoRetornoGC = Math.max(
+						...grupoRetornoGC.map(e => Number(e.id))
+					);
+				}
+			} catch (erroRetorno) {
+				console.error(
+					'Baixa confirmada, mas não foi possível localizar o cartão:',
+					erroRetorno.message
+				);
+			}
+
 			return res.redirect(
 				303,
 				'/entregas/conferencia/rota' +
 					'?data=' + encodeURIComponent(dataRetornoGC) +
 					'&horario=' + encodeURIComponent(dados.entrega.horario_rota) +
-					'&motoboy=' + encodeURIComponent(dados.entrega.motoboy)
+					'&motoboy=' + encodeURIComponent(dados.entrega.motoboy) +
+					'#cliente-' + idCartaoRetornoGC
 			);
         } catch (erro) {
 			console.error('❌ Falha na baixa GestãoClick:', {
