@@ -6056,13 +6056,13 @@ let tabelaComprovantesRotaPronta = null;
 function prepararComprovantesRota() {
     if (!tabelaComprovantesRotaPronta) {
         tabelaComprovantesRotaPronta = db.execute(`
-            CREATE TABLE IF NOT EXISTS entregas_comprovantes_loja (
+            CREATE TABLE IF NOT EXISTS entregas_comprovantes_cloud (
                 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                 entrega_id INT NOT NULL,
                 pedidos_ids TEXT NOT NULL,
                 nome VARCHAR(255) NOT NULL,
                 tipo VARCHAR(50) NOT NULL,
-                arquivo MEDIUMBLOB NOT NULL,
+                public_id VARCHAR(255) NOT NULL,
                 criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_comprovante_entrega (entrega_id)
             )
@@ -6073,6 +6073,53 @@ function prepararComprovantesRota() {
     }
 
     return tabelaComprovantesRotaPronta;
+}
+
+function enviarComprovanteRotaCloud(buffer, tipo) {
+    const extensoes = {
+        'application/pdf': 'pdf',
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp'
+    };
+
+    const extensao = extensoes[tipo];
+
+    if (!extensao) {
+        throw new Error('Formato de comprovante inválido.');
+    }
+
+    const publicId =
+        'comprovantes_entregas/' +
+        cryptoEntregas.randomUUID() +
+        '.' + extensao;
+
+    return new Promise((resolve, reject) => {
+        const envio = cloudinary.uploader.upload_stream(
+            {
+                resource_type: 'raw',
+                type: 'authenticated',
+                public_id: publicId,
+                overwrite: false
+            },
+            (erro, resultado) => {
+                if (erro) {
+                    return reject(erro);
+                }
+
+                if (!resultado?.public_id) {
+                    return reject(
+                        new Error('Cloudinary não confirmou o envio.')
+                    );
+                }
+
+                resolve(resultado);
+            }
+        );
+
+        envio.on('error', reject);
+        envio.end(buffer);
+    });
 }
 
 const receberComprovanteRota = multer({
@@ -6214,7 +6261,7 @@ app.get(
                     c.entrega_id,
                     c.pedidos_ids,
                     c.nome
-                FROM entregas_comprovantes_loja c
+                FROM entregas_comprovantes_cloud c
                 WHERE EXISTS (
                     SELECT 1
                     FROM entregas_motoboy e
@@ -6643,22 +6690,38 @@ app.post(
                 .replace(/[\x00-\x1f\x7f]/g, '')
                 .slice(0, 255);
 
-            await db.execute(`
-                INSERT INTO entregas_comprovantes_loja (
-                    entrega_id,
-                    pedidos_ids,
-                    nome,
-                    tipo,
-                    arquivo
-                )
-                VALUES (?, ?, ?, ?, ?)
-            `, [
-                req.params.id,
-                JSON.stringify(grupo.map(e => String(e.id))),
-                nome,
-                tipo,
-                req.file.buffer
-            ]);
+            const arquivoCloud = await enviarComprovanteRotaCloud(
+				req.file.buffer,
+				tipo
+			);
+
+			try {
+				await db.execute(`
+					INSERT INTO entregas_comprovantes_cloud (
+						entrega_id,
+						pedidos_ids,
+						nome,
+						tipo,
+						public_id
+					)
+					VALUES (?, ?, ?, ?, ?)
+				`, [
+					req.params.id,
+					JSON.stringify(grupo.map(e => String(e.id))),
+					nome,
+					tipo,
+					arquivoCloud.public_id
+				]);
+			} catch (erroBanco) {
+				// Preserva o arquivo caso o banco tenha gravado,
+				// mas a conexão tenha falhado antes de responder.
+				console.error(
+					'Confira o vínculo do comprovante no banco. ID Cloudinary:',
+					arquivoCloud.public_id
+				);
+
+				throw erroBanco;
+			}
 
             const primeiro = grupo[0];
 
@@ -6693,29 +6756,59 @@ app.get(
             await prepararComprovantesRota();
 
             const [registros] = await db.execute(`
-                SELECT tipo, arquivo
-                FROM entregas_comprovantes_loja
+                SELECT tipo, public_id
+                FROM entregas_comprovantes_cloud
                 WHERE id = ?
             `, [req.params.id]);
 
             const comprovante = registros[0];
 
             if (!comprovante) {
-                return res.status(404).send('Comprovante não encontrado.');
+                return res.status(404).send(
+                    'Comprovante não encontrado.'
+                );
             }
+
+            const urlProtegida = cloudinary.url(
+                comprovante.public_id,
+                {
+                    resource_type: 'raw',
+                    type: 'authenticated',
+                    secure: true,
+                    sign_url: true
+                }
+            );
+
+            // O servidor busca o arquivo.
+            // O endereço assinado não é exposto no navegador.
+            const resposta = await axios.get(urlProtegida, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                maxContentLength: 5 * 1024 * 1024,
+                maxRedirects: 0
+            });
 
             res.set({
                 'Content-Type': comprovante.tipo,
                 'Content-Disposition': 'inline',
                 'Cache-Control': 'private, no-store',
                 'X-Content-Type-Options': 'nosniff',
-                'Content-Security-Policy': "sandbox; default-src 'none'"
+                'Content-Security-Policy':
+                    "sandbox; default-src 'none'"
             });
 
-            return res.send(comprovante.arquivo);
+            return res.send(Buffer.from(resposta.data));
         } catch (erro) {
-            console.error('Erro ao abrir comprovante:', erro.message);
-            return res.status(500).send('Não foi possível abrir o comprovante.');
+            // Não imprime o objeto Axios, pois contém a URL assinada.
+            console.error(
+                'Erro ao abrir comprovante no Cloudinary:',
+                erro.message
+            );
+
+            return res.status(502).send(
+                'Não foi possível abrir o comprovante. ' +
+                'Tente novamente em alguns instantes.'
+            );
         }
     }
 );
