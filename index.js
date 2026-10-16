@@ -6130,7 +6130,7 @@ app.get(
 						: '#ccc';
 
 				return `
-					<div style="min-width: 190px;">
+					<div style="min-width: 0;">
 						<p style="
 							margin: 0 0 8px;
 							color: ${cor};
@@ -6440,6 +6440,45 @@ app.get(
 			`).join('');
 
             res.send(paginaEntregas('Conferência de entregas', `
+			<style>
+				/* Aproveita melhor a largura da tela nesta página */
+				main {
+					max-width: 1600px;
+					width: 100%;
+					min-width: 0;
+				}
+
+				.tabela {
+					width: 100%;
+					overflow-x: auto;
+				}
+
+				.tabela th,
+				.tabela td {
+					padding: 10px 8px;
+					font-size: 14px;
+				}
+
+				/* Permite que textos e botões da conferência se ajustem */
+				.tabela td:last-child > div {
+					min-width: 0 !important;
+				}
+
+				.tabela td:last-child form {
+					flex-wrap: wrap;
+				}
+
+				.tabela td:last-child p {
+					white-space: normal;
+					overflow-wrap: anywhere;
+				}
+
+				/* Limita a largura ocupada pelas peças para coletar */
+				.tabela td:nth-child(9) {
+					max-width: 230px;
+					overflow-wrap: anywhere;
+				}
+			</style>
                 <section>
                     <form method="get">
                         <label>Data</label>
