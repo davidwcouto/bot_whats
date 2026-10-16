@@ -6386,7 +6386,15 @@ app.get(
 					e => statusBaixasRota.get(String(e.id)) === 'confirmado'
 				);
 
-				const classe = pagamentoConfirmadoGC ? 'entregue' : '';
+				const temContaPrazo = grupo.some(
+					e => e.forma_pagamento === 'conta_prazo'
+				);
+
+				const classe = temContaPrazo
+					? 'conferencia-conta-prazo'
+					: pagamentoConfirmadoGC
+						? 'entregue'
+						: '';
 
                 const coletas = grupo
                     .map(e => String(e.coletar || '').trim())
@@ -6520,6 +6528,10 @@ app.get(
                         margin-top: 6px;
                         font-size: 22px;
                     }
+					
+					article.conferencia-conta-prazo {
+						border-left-color: #f59e0b;
+					}
 
                     article input[type="file"] {
                         width: 100%;
