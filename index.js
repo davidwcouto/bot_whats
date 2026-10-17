@@ -229,6 +229,7 @@ function prepararPesquisa(texto) {
 		"cola",
 		"chave",
 		"luva",
+		"carcaça",
 		"conector"
     ];
 
@@ -251,6 +252,7 @@ function pesquisaValida(pesquisa) {
 		"cola",
 		"chave",
 		"luva",
+		"carcaça",
 		"conector"
     ];
 
@@ -4109,7 +4111,18 @@ async function gcConferir(id) {
 			);
 		}
 
-		formaId = String(recebimento.forma_pagamento_id);
+		const formaDevolucaoId = String(
+			process.env.GESTAOCLICK_FORMA_DEVOLUCAO_ID || ''
+		).trim();
+
+		if (!/^\d+$/.test(formaDevolucaoId)) {
+			throw new Error(
+				'Configure GESTAOCLICK_FORMA_DEVOLUCAO_ID no Railway ' +
+				'com o ID de Devolução de Mercadorias desta loja.'
+			);
+		}
+
+		formaId = formaDevolucaoId;
 	} else {
 		formaId = pagamento.modo === 'PIX'
 			? config.GESTAOCLICK_FORMA_PIX_ID
@@ -7240,7 +7253,7 @@ app.get(
 								font-weight: bold;
 							"
 						>
-							Conferir clientes e comprovantes
+							Conferir rota
 						</a>
 					</td>
                 </tr>
