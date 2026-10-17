@@ -6322,6 +6322,73 @@ app.get(
             const cartoes = grupos.map(grupo => {
                 const primeiro = grupo[0];
 				
+				const botoesContasReceber = grupo.map(e => {
+					const numeroPedido = String(e.pedido || '').trim();
+					const lojaId = String(
+						process.env.GESTAOCLICK_LOJA_ID || ''
+					).trim();
+
+					if (!numeroPedido || !lojaId) return '';
+
+					const parametros = new URLSearchParams({
+						loja: lojaId,
+						codigo: '',
+						'numero-boleto': '',
+						'tipo-entidade': 'C',
+						cliente: '',
+						fornecedor: '',
+						transportadora: '',
+						funcionario: '',
+						outros: '',
+						nome: numeroPedido,
+						data_inicio: '',
+						data_fim: '',
+						data_inicio_emissao: '',
+						data_fim_emissao: '',
+						data_inicio_boleto: '',
+						data_fim_boleto: '',
+						valor_inicio: '',
+						valor_fim: '',
+						baixado: '',
+						situacao: '',
+						categoria: '',
+						'centro-custo': '',
+						nota: '',
+						nfse: '',
+						nfse_id: '',
+						conta_bancaria: '',
+						forma_pagamento: '',
+						atributo: '',
+						tipo: 'C',
+						situacaoBuscaAvancada: 'true'
+					});
+
+					const url =
+						'https://gestaoclick.com/financeiro/' +
+						'movimentacoes_financeiras/index_recebimento?' +
+						parametros.toString();
+
+					return `
+						<a
+							href="${escaparHtml(url)}"
+							target="_blank"
+							rel="noopener noreferrer"
+							style="
+								display: inline-block;
+								padding: 12px 16px;
+								margin: 6px 8px 6px 0;
+								background: #374151;
+								color: white;
+								border-radius: 8px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Contas a receber — Pedido ${escaparHtml(numeroPedido)}
+						</a>
+					`;
+				}).join('');
+				
 				const botoesGestaoClick = grupo.map(e => {
 					const pedido = escaparHtml(e.pedido || String(e.id));
 					const statusBaixa = statusBaixasRota.get(String(e.id));
