@@ -7724,15 +7724,16 @@ app.post(
 
         try {
             const [entregas] = await db.execute(`
-                SELECT
-                    motoboy,
-                    horario_rota,
-                    DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
-                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS data_painel
-                FROM entregas_motoboy
-                WHERE codigo_acesso = ?
-                ORDER BY id
-            `, [codigo]);
+				SELECT
+					pedido,
+					motoboy,
+					horario_rota,
+					DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+					DATE_FORMAT(data_rota, '%Y-%m-%d') AS data_painel
+				FROM entregas_motoboy
+				WHERE codigo_acesso = ?
+				ORDER BY id
+			`, [codigo]);
 
             if (!entregas.length) {
                 return res.status(404).send(
@@ -7812,16 +7813,22 @@ app.post(
                 enderecoBase.origin
             ).href;
 
-            const mensagem = [
-                `🛵 *Sua rota de entregas — ${rota.motoboy}*`,
-                '',
-                `📅 Data: ${rota.data_formatada}`,
-                `⏰ Rota: ${rota.horario_rota}`,
-                `📦 Entregas: ${entregas.length}`,
-                '',
-                'Abra o link para visualizar os clientes e registrar os pagamentos:',
-                link
-            ].join('\n');
+            const numerosPedidos = entregas
+				.map(e => String(e.pedido || '').trim())
+				.filter(Boolean)
+				.join(', ');
+
+			const mensagem = [
+				`🛵 *Sua rota de entregas — ${rota.motoboy}*`,
+				'',
+				`📅 Data: ${rota.data_formatada}`,
+				`⏰ Rota: ${rota.horario_rota}`,
+				`📦 Entregas: ${entregas.length}`,
+				`🧾 Pedidos: ${numerosPedidos || 'Não informados'}`,
+				'',
+				'Abra o link para visualizar os clientes e registrar os pagamentos:',
+				link
+			].join('\n');
 
             await client.sendMessage(
                 destinatario._serialized,
