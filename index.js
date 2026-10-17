@@ -6090,18 +6090,19 @@ function enviarComprovanteRotaCloud(buffer, tipo) {
     }
 
     const publicId =
-        'comprovantes_entregas/' +
-        cryptoEntregas.randomUUID() +
-        '.' + extensao;
+		'comprovantes_conferencias/' +
+		cryptoEntregas.randomUUID() +
+		'.' + extensao;
 
     return new Promise((resolve, reject) => {
         const envio = cloudinary.uploader.upload_stream(
             {
-                resource_type: 'raw',
-                type: 'authenticated',
-                public_id: publicId,
-                overwrite: false
-            },
+				resource_type: 'raw',
+				type: 'authenticated',
+				asset_folder: 'comprovantes_conferencias',
+				public_id: publicId,
+				overwrite: false
+			},
             (erro, resultado) => {
                 if (erro) {
                     return reject(erro);
