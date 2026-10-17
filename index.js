@@ -6595,6 +6595,7 @@ app.get(
 
                         <div style="margin: 20px 0;">
 							${botoesGestaoClick}
+							${botoesContasReceber}
 						</div>
 
 						<h3>Comprovantes anexados</h3>
