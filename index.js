@@ -6620,6 +6620,108 @@ app.get(
                             action="/entregas/conferencia/cliente/${Number(primeiro.id)}/comprovante"
                         >
                             ${csrfEntregaCampo()}
+							
+							<div
+								tabindex="0"
+								role="group"
+								aria-label="Colar imagem do comprovante"
+								style="
+									padding: 20px;
+									margin-bottom: 16px;
+									border: 2px dashed #888;
+									border-radius: 10px;
+									background: #303030;
+									color: white;
+									text-align: center;
+									cursor: pointer;
+								"
+								onclick="this.focus();"
+								onfocus="this.style.borderColor = '#f1c40f';"
+								onblur="this.style.borderColor = '#888';"
+								onpaste="
+									event.preventDefault();
+
+									if (this.dataset.enviando === '1') return;
+
+									const itens = Array.from(
+										event.clipboardData?.items || []
+									);
+
+									const item = itens.find(function (item) {
+										return item.kind === 'file' &amp;&amp;
+											item.type.startsWith('image/');
+									});
+
+									if (!item) {
+										alert(
+											'Nenhuma imagem encontrada. No WhatsApp, ' +
+											'use Copiar imagem e depois cole aqui.'
+										);
+										return;
+									}
+
+									const arquivo = item.getAsFile();
+
+									if (!arquivo) {
+										alert('Não foi possível ler a imagem copiada.');
+										return;
+									}
+
+									const extensoes = {
+										'image/png': 'png',
+										'image/jpeg': 'jpg',
+										'image/webp': 'webp'
+									};
+
+									const extensao = extensoes[arquivo.type];
+
+									if (!extensao) {
+										alert('Use uma imagem PNG, JPG ou WEBP.');
+										return;
+									}
+
+									if (arquivo.size > 5 * 1024 * 1024) {
+										alert('O comprovante deve ter no máximo 5 MB.');
+										return;
+									}
+
+									const formulario = this.closest('form');
+									const campo = formulario.querySelector(
+										'input[type=file][name=comprovante]'
+									);
+
+									try {
+										const transferencia = new DataTransfer();
+
+										transferencia.items.add(
+											new File(
+												[arquivo],
+												'comprovante-' + Date.now() + '.' + extensao,
+												{ type: arquivo.type }
+											)
+										);
+
+										campo.files = transferencia.files;
+									} catch (erro) {
+										alert(
+											'Não foi possível colar neste navegador. ' +
+											'Use Escolher arquivo.'
+										);
+										return;
+									}
+
+									if (!formulario.reportValidity()) return;
+
+									this.dataset.enviando = '1';
+									this.textContent = 'Enviando comprovante…';
+
+									formulario.requestSubmit();
+								"
+							>
+								📋 Clique aqui e pressione <strong>Ctrl+V</strong>
+								<br>
+								<small>para anexar a imagem copiada do WhatsApp</small>
+							</div>
 
                             <label for="arquivo-${Number(primeiro.id)}">
                                 Anexar comprovante — até 5 MB
