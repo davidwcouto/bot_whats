@@ -229,7 +229,7 @@ function prepararPesquisa(texto) {
 		"cola",
 		"chave",
 		"luva",
-		"carcaça",
+		"carcaca",
 		"conector"
     ];
 
@@ -252,7 +252,7 @@ function pesquisaValida(pesquisa) {
 		"cola",
 		"chave",
 		"luva",
-		"carcaça",
+		"carcaca",
 		"conector"
     ];
 
