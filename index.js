@@ -8565,6 +8565,110 @@ app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
 
+app.get(
+    '/entregas/teste-api-pagamento/:pedido',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const codigo = String(req.params.pedido || '').trim();
+
+            if (!/^\d+$/.test(codigo)) {
+                return res.status(400).json({
+                    erro: 'Número de pedido inválido.'
+                });
+            }
+
+            const config = gcConfiguracao();
+
+            const vendas = (
+                await gcListar('/vendas', {
+                    codigo,
+                    loja_id: config.GESTAOCLICK_LOJA_ID,
+                    tipo: 'vendas_balcao'
+                })
+            ).filter(venda => String(venda.codigo) === codigo);
+
+            if (vendas.length !== 1) {
+                return res.status(409).json({
+                    erro: 'Não foi encontrada uma única venda.',
+                    quantidade: vendas.length
+                });
+            }
+
+            const venda = vendas[0];
+
+            // Busca pela loja, incluindo recebimentos sem cliente
+            // vinculado e recebimentos já liquidados.
+            const recebimentos = await gcListar('/recebimentos', {
+                loja_id: config.GESTAOCLICK_LOJA_ID
+            });
+
+            const vinculadosPorDescricao = recebimentos.filter(r => {
+                const referencia = String(r.descricao || '')
+                    .trim()
+                    .match(
+                        /^Venda de n[º°o]\s*(\d+)(?:\s*\(\s*\d+\s*\/\s*\d+\s*\))?$/i
+                    );
+
+                return (
+                    referencia?.[1] === codigo &&
+                    String(r.loja_id) ===
+                        config.GESTAOCLICK_LOJA_ID
+                );
+            });
+
+            return res.json({
+                aviso: 'Consulta somente. Nenhum dado foi alterado.',
+                loja_configurada: config.GESTAOCLICK_LOJA_ID,
+                formas_configuradas: {
+                    pix: config.GESTAOCLICK_FORMA_PIX_ID,
+                    dinheiro: config.GESTAOCLICK_FORMA_DINHEIRO_ID
+                },
+                venda: {
+                    id: venda.id,
+                    codigo: venda.codigo,
+                    cliente_id: venda.cliente_id,
+                    nome_cliente: venda.nome_cliente,
+                    loja_id: venda.loja_id,
+                    nome_loja: venda.nome_loja,
+                    data: venda.data,
+                    situacao_id: venda.situacao_id,
+                    situacao_financeiro: venda.situacao_financeiro,
+                    valor_total: venda.valor_total,
+                    condicao_pagamento: venda.condicao_pagamento,
+                    pagamentos: venda.pagamentos
+                },
+                recebimentos: vinculadosPorDescricao.map(r => ({
+                    id: r.id,
+                    descricao: r.descricao,
+                    cliente_id: r.cliente_id,
+                    loja_id: r.loja_id,
+                    valor: r.valor,
+                    valor_total: r.valor_total,
+                    liquidado: r.liquidado,
+                    forma_pagamento_id: r.forma_pagamento_id,
+                    nome_forma_pagamento: r.nome_forma_pagamento,
+                    conta_bancaria_id: r.conta_bancaria_id,
+                    plano_contas_id: r.plano_contas_id,
+                    data_vencimento: r.data_vencimento,
+                    data_competencia: r.data_competencia
+                }))
+            });
+        } catch (erro) {
+            console.error(
+                'Erro na consulta de teste GestãoClick:',
+                erro.message
+            );
+
+            return res.status(502).json({
+                erro: erro.message
+            });
+        }
+    }
+);
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 API de cupons ativa na porta ${PORT}`);
 });
