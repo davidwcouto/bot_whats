@@ -1,0 +1,147 @@
+﻿{
+    "venda":  {
+                  "id":  "406487692",
+                  "codigo":  "8839",
+                  "cliente_id":  "60216403",
+                  "nome_cliente":  "David Couto",
+                  "vendedor_id":  "1313321",
+                  "nome_vendedor":  "David Couto",
+                  "tecnico_id":  "",
+                  "nome_tecnico":  "",
+                  "data":  "2026-10-18",
+                  "previsao_entrega":  "2026-10-18",
+                  "situacao_id":  "8860174",
+                  "nome_situacao":  "Concretizada",
+                  "valor_total":  "50.00",
+                  "transportadora_id":  "",
+                  "nome_transportadora":  "",
+                  "centro_custo_id":  "",
+                  "nome_centro_custo":  "",
+                  "aos_cuidados_de":  "",
+                  "validade":  "",
+                  "introducao":  "",
+                  "observacoes":  "",
+                  "observacoes_interna":  "",
+                  "desconto_valor":  "0.00",
+                  "desconto_porcentagem":  "0.00",
+                  "valor_frete":  "",
+                  "nome_canal_venda":  "Presencial",
+                  "nome_loja":  "01 - Matriz",
+                  "valor_servicos":  "0.00",
+                  "valor_produtos":  "50.00",
+                  "valor_custo":  "1.00",
+                  "condicao_pagamento":  "a_vista",
+                  "situacao_financeiro":  "1",
+                  "situacao_estoque":  "1",
+                  "forma_pagamento_id":  "6775495",
+                  "data_primeira_parcela":  "",
+                  "numero_parcelas":  "1",
+                  "intervalo_dias":  "",
+                  "nota_fiscal_id":  "",
+                  "nota_fiscal_servico_id":  "",
+                  "hash":  "jR5prNN",
+                  "cadastrado_em":  "2026-10-18 22:28:20",
+                  "modificado_em":  "2026-10-18 22:28:20",
+                  "exibir_endereco":  0,
+                  "cor_situacao":  "#5cb85c",
+                  "nome_forma_pagamento":  "Dinheiro",
+                  "equipamentos":  [
+
+                                   ],
+                  "pagamentos":  [
+                                     {
+                                         "pagamento":  {
+                                                           "data_vencimento":  "2026-10-18",
+                                                           "valor":  "50.00",
+                                                           "forma_pagamento_id":  "6775495",
+                                                           "nome_forma_pagamento":  "Dinheiro",
+                                                           "plano_contas_id":  "34453683",
+                                                           "nome_plano_conta":  "Vendas no balcão",
+                                                           "observacao":  ""
+                                                       }
+                                     }
+                                 ],
+                  "enderecos":  [
+
+                                ],
+                  "atributos":  [
+                                    {
+                                        "atributo":  {
+                                                         "id":  "61903420",
+                                                         "atributo_id":  "89826",
+                                                         "descricao":  "COLETAR",
+                                                         "conteudo":  "sem coleta",
+                                                         "tipo":  "texto_simples"
+                                                     }
+                                    }
+                                ],
+                  "produtos":  [
+                                   {
+                                       "produto":  {
+                                                       "produto_id":  "92057597",
+                                                       "variacao_id":  "160567158",
+                                                       "nome_produto":  "( PELICULA )",
+                                                       "detalhes":  "",
+                                                       "movimenta_estoque":  "1",
+                                                       "possui_variacao":  "0",
+                                                       "sigla_unidade":  "UN",
+                                                       "quantidade":  "1",
+                                                       "tipo_valor_id":  "650719",
+                                                       "nome_tipo_valor":  "Varejo",
+                                                       "valor_custo":  "1.00",
+                                                       "valor_venda":  "50.00",
+                                                       "tipo_desconto":  "R$",
+                                                       "desconto_valor":  "",
+                                                       "desconto_porcentagem":  "",
+                                                       "valor_total":  "50.00"
+                                                   }
+                                   }
+                               ],
+                  "anexos":  [
+
+                             ]
+              },
+    "recebimentos":  [
+                         {
+                             "id":  "613425824",
+                             "codigo":  "8990",
+                             "descricao":  "Venda de nº 8839",
+                             "valor":  "50.00",
+                             "juros":  "0.00",
+                             "desconto":  "0.00",
+                             "taxa_banco":  "0.00",
+                             "taxa_operadora":  "0.00",
+                             "valor_total":  "50.00",
+                             "plano_contas_id":  "34453683",
+                             "nome_plano_conta":  "Vendas no balcão",
+                             "centro_custo_id":  "",
+                             "nome_centro_custo":  "",
+                             "conta_bancaria_id":  "714377",
+                             "nome_conta_bancaria":  "Conta bancária",
+                             "forma_pagamento_id":  "6775495",
+                             "nome_forma_pagamento":  "Dinheiro",
+                             "entidade":  "C",
+                             "fornecedor_id":  "",
+                             "nome_fornecedor":  "",
+                             "cliente_id":  "60216403",
+                             "nome_cliente":  "David Couto",
+                             "transportadora_id":  "",
+                             "nome_transportadora":  "",
+                             "funcionario_id":  "",
+                             "nome_funcionario":  "",
+                             "liquidado":  "0",
+                             "data_vencimento":  "2026-10-18",
+                             "data_liquidacao":  "",
+                             "data_competencia":  "2026-10-18",
+                             "usuario_id":  "1313321",
+                             "nome_usuario":  "David Couto",
+                             "loja_id":  "552685",
+                             "nome_loja":  "01 - Matriz",
+                             "cadastrado_em":  "2026-10-18 22:28:20",
+                             "modificado_em":  "2026-10-18 22:32:47",
+                             "atributos":  [
+
+                                           ]
+                         }
+                     ]
+}
