@@ -6621,13 +6621,23 @@ app.get(
                         >
                             ${csrfEntregaCampo()}
 							
+							<div style="
+								display: flex;
+								align-items: center;
+								gap: 16px;
+								flex-wrap: wrap;
+							">
+							
 							<div
 								tabindex="0"
 								role="group"
 								aria-label="Colar imagem do comprovante"
 								style="
 									padding: 20px;
-									margin-bottom: 16px;
+									margin-bottom: 0;
+									flex: 1 1 280px;
+									min-width: 0;
+									box-sizing: border-box;
 									border: 2px dashed #888;
 									border-radius: 10px;
 									background: #303030;
@@ -6722,7 +6732,8 @@ app.get(
 								<br>
 								<small>para anexar a imagem copiada do WhatsApp</small>
 							</div>
-
+							
+							<div style="flex: 1 1 280px; min-width: 0;">
                             <label for="arquivo-${Number(primeiro.id)}">
                                 Anexar comprovante — até 5 MB
                             </label>
@@ -6745,7 +6756,9 @@ app.get(
 									this.form.requestSubmit();
 								"
 							>
-
+							
+							    </div>
+							</div>
                         </form>
                     </article>
                 `;
