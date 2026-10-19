@@ -6997,10 +6997,14 @@ app.get(
             return res.send(Buffer.from(resposta.data));
         } catch (erro) {
             // Não imprime o objeto Axios, pois contém a URL assinada.
-            console.error(
-                'Erro ao abrir comprovante no Cloudinary:',
-                erro.message
-            );
+            console.error('Erro ao abrir comprovante no Cloudinary:', {
+				comprovanteId: req.params.id,
+				mensagem: erro.message,
+				codigo: erro.code,
+				status: erro.response?.status,
+				detalheCloudinary:
+					erro.response?.headers?.['x-cld-error']
+			});
 
             return res.status(502).send(
                 'Não foi possível abrir o comprovante. ' +
