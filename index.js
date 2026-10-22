@@ -3957,15 +3957,30 @@ function gcPagamento(entrega) {
         throw new Error('Pagamento ainda não informado.');
     }
 
-        if (
+        const totalRecebido = pix + dinheiro;
+
+		if (
 			!Number.isSafeInteger(pix) ||
 			!Number.isSafeInteger(dinheiro) ||
+			!Number.isSafeInteger(totalRecebido) ||
 			pix < 0 ||
-			dinheiro < 0 ||
-			pix + dinheiro !== total
+			dinheiro < 0
 		) {
+			throw new Error('Os valores recebidos são inválidos.');
+		}
+
+		if (totalRecebido < total) {
 			throw new Error(
-				'A soma de PIX e dinheiro precisa ser igual ao total da venda.'
+				'O valor recebido é menor que o total da venda. ' +
+				'Confira o saldo em "Sem marcação".'
+			);
+		}
+
+		if (totalRecebido > total && pix > 0) {
+			throw new Error(
+				'Recebimento acima do total está disponível somente ' +
+				'para pagamento integral em dinheiro. ' +
+				'Excedente com PIX exige conferência manual.'
 			);
 		}
 
@@ -4002,6 +4017,8 @@ function gcPagamento(entrega) {
 
 		return {
 			total,
+			totalRecebido,
+			excedente: totalRecebido - total,
 			modo: pix === total ? 'PIX' : 'Dinheiro'
 		};
 	}
@@ -4523,9 +4540,23 @@ app.get(
                     escaparHtml(r.nome_loja)
                 }</strong></p>
 
-                <p>Valor: <strong>${
-                    moedaEntregas(dados.pagamento.total / 100)
-                }</strong></p>
+                <p>Valor da venda: <strong>${
+					moedaEntregas(dados.pagamento.total / 100)
+				}</strong></p>
+
+				<p>Valor recebido: <strong>${
+					moedaEntregas(
+						(dados.pagamento.totalRecebido ?? dados.pagamento.total) / 100
+					)
+				}</strong></p>
+
+				${dados.pagamento.excedente > 0 ? `
+					<p style="color: #f59e0b; font-weight: bold;">
+						Recebido a mais:
+						${moedaEntregas(dados.pagamento.excedente / 100)}.
+						Compensar manualmente como desconto na próxima compra.
+					</p>
+				` : ''}
 
                 <p>Forma: <strong>${
                     dados.pagamento.modo
@@ -4644,6 +4675,12 @@ app.post(
             }
 			
 			corpo.loja_id = dados.config.GESTAOCLICK_LOJA_ID;
+			
+			const valorBaixaCentavos =
+				dados.pagamento.totalRecebido ?? dados.pagamento.total;
+
+			corpo.valor = (valorBaixaCentavos / 100).toFixed(2);
+			corpo.valor_total = (valorBaixaCentavos / 100).toFixed(2);
 
             corpo.forma_pagamento_id = dados.formaId;
             corpo.conta_bancaria_id =
@@ -4666,10 +4703,10 @@ app.post(
                     VALUES (?, ?, ?, ?, ?, 'tentativa')
                 `, [
                     recebimentoId,
-                    dados.entrega.id,
-                    String(dados.venda.id),
-                    dados.pagamento.modo,
-                    dados.pagamento.total
+					dados.entrega.id,
+					String(dados.venda.id),
+					dados.pagamento.modo,
+					valorBaixaCentavos
                 ]);
             } catch (erro) {
                 if (erro.code === 'ER_DUP_ENTRY') {
@@ -4712,18 +4749,49 @@ app.post(
 
                 const confirmado = verificacao.data;
 
-                if (
-                    !confirmado ||
-                    String(confirmado.id) !== recebimentoId ||
-                    String(confirmado.liquidado) !== '1' ||
-                    String(confirmado.forma_pagamento_id) !== dados.formaId ||
-                    String(confirmado.conta_bancaria_id) !==
-                        dados.config.GESTAOCLICK_CONTA_BANCARIA_ID ||
-                    gcCentavos(confirmado.valor_total) !==
-                        dados.pagamento.total
-                ) {
-                    throw new Error('Não foi possível verificar a baixa.');
-                }
+				if (
+					!confirmado ||
+					String(confirmado.id) !== recebimentoId ||
+					String(confirmado.liquidado) !== '1' ||
+					String(confirmado.loja_id) !==
+						dados.config.GESTAOCLICK_LOJA_ID ||
+					String(confirmado.cliente_id) !==
+						String(dados.venda.cliente_id) ||
+					String(confirmado.forma_pagamento_id) !== dados.formaId ||
+					String(confirmado.conta_bancaria_id) !==
+						dados.config.GESTAOCLICK_CONTA_BANCARIA_ID ||
+					gcCentavos(confirmado.valor) !== valorBaixaCentavos ||
+					gcCentavos(confirmado.valor_total) !== valorBaixaCentavos ||
+					['juros', 'desconto', 'taxa_banco', 'taxa_operadora']
+						.some(campo => gcCentavos(confirmado[campo] ?? 0) !== 0)
+				) {
+					throw new Error('Não foi possível verificar a baixa.');
+				}
+
+				if (dados.pagamento.excedente > 0) {
+					const consultaVenda = await gcApi(
+						'GET',
+						`/vendas/${encodeURIComponent(dados.venda.id)}`,
+						{
+							loja_id: dados.config.GESTAOCLICK_LOJA_ID,
+							tipo: 'vendas_balcao'
+						}
+					);
+
+					const vendaDepois = consultaVenda.data;
+
+					if (
+						!vendaDepois ||
+						String(vendaDepois.id) !== String(dados.venda.id) ||
+						gcCentavos(vendaDepois.valor_total) !== dados.pagamento.total
+					) {
+						throw new Error(
+							'O recebimento foi enviado, mas não foi possível confirmar ' +
+							'que o valor original da venda foi preservado. ' +
+							'Confira no GestãoClick antes de qualquer nova tentativa.'
+						);
+					}
+				}
             }
 
             await db.execute(`
