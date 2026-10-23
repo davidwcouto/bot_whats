@@ -3893,38 +3893,39 @@ async function gcListar(caminho, parametros) {
 }
 
 function gcPagamento(entrega) {
-	    if (
-			entrega.total !== null &&
-			entrega.total !== undefined &&
-			Number(entrega.total) === 0
-		) {
-			if (entrega.status_entrega !== 'entregue') {
-				throw new Error(
-					'O motoboy precisa confirmar a troca antes da baixa.'
-				);
-			}
+    if (
+        entrega.total !== null &&
+        entrega.total !== undefined &&
+        Number(entrega.total) === 0
+    ) {
+        if (entrega.status_entrega !== 'entregue') {
+            throw new Error(
+                'O motoboy precisa confirmar a troca antes da baixa.'
+            );
+        }
 
-			const pix = gcCentavos(entrega.valor_recebido_pix ?? 0);
-			const dinheiro = gcCentavos(
-				entrega.valor_recebido_dinheiro ?? 0
-			);
-			const abatimento = gcCentavos(
-				entrega.dinheiro_conta_prazo ?? 0
-			);
+        const valores = [
+            entrega.valor_recebido_pix ?? 0,
+            entrega.valor_recebido_dinheiro ?? 0,
+            entrega.dinheiro_conta_prazo ?? 0
+        ].map(gcCentavos);
 
-			if (pix > 0 || dinheiro > 0 || abatimento > 0) {
-				throw new Error(
-					'Esta troca tem valores recebidos. ' +
-					'Confira esses valores no GestãoClick antes de encerrar.'
-				);
-			}
+        if (valores.some(valor => valor !== 0)) {
+            throw new Error(
+                'Esta troca tem valores recebidos. Confira no GestãoClick.'
+            );
+        }
 
-			return {
-				total: 0,
-				modo: 'Troca'
-			};
-		}
-		
+        return {
+            total: 0,
+            totalRecebido: 0,
+            saldo: 0,
+            excedente: 0,
+            parcial: false,
+            modo: 'Troca'
+        };
+    }
+
     if (
         entrega.forma_pagamento === 'conta_prazo' ||
         Number(entrega.cliente_conta_prazo_id) > 0 ||
@@ -3939,16 +3940,18 @@ function gcPagamento(entrega) {
 
     const total = gcCentavos(entrega.total);
 
-    if (total <= 0) {
-        throw new Error('O total do pedido precisa ser maior que zero.');
+    if (!Number.isSafeInteger(total) || total <= 0) {
+        throw new Error('O total do pedido é inválido.');
     }
 
     let pix = 0;
     let dinheiro = 0;
 
     if (entrega.forma_pagamento === 'pix') {
+        // Botão de pagamento integral no PIX.
         pix = total;
     } else if (entrega.forma_pagamento === 'dinheiro') {
+        // Campos de valores informados pelo motoboy, inclusive misto.
         pix = gcCentavos(entrega.valor_recebido_pix ?? 0);
         dinheiro = gcCentavos(
             entrega.valor_recebido_dinheiro ?? entrega.total
@@ -3957,71 +3960,70 @@ function gcPagamento(entrega) {
         throw new Error('Pagamento ainda não informado.');
     }
 
-        const totalRecebido = pix + dinheiro;
+    const totalRecebido = pix + dinheiro;
 
-		if (
-			!Number.isSafeInteger(pix) ||
-			!Number.isSafeInteger(dinheiro) ||
-			!Number.isSafeInteger(totalRecebido) ||
-			pix < 0 ||
-			dinheiro < 0
-		) {
-			throw new Error('Os valores recebidos são inválidos.');
-		}
+    if (
+        !Number.isSafeInteger(pix) ||
+        !Number.isSafeInteger(dinheiro) ||
+        !Number.isSafeInteger(totalRecebido) ||
+        pix < 0 ||
+        dinheiro < 0 ||
+        totalRecebido <= 0
+    ) {
+        throw new Error(
+            'Informe um valor recebido maior que zero para realizar a baixa.'
+        );
+    }
 
-		if (totalRecebido < total) {
-			throw new Error(
-				'O valor recebido é menor que o total da venda. ' +
-				'Confira o saldo em "Sem marcação".'
-			);
-		}
+    if (totalRecebido > total && pix > 0) {
+        throw new Error(
+            'Recebimento acima do total está disponível somente ' +
+            'para pagamento integral em dinheiro.'
+        );
+    }
 
-		if (totalRecebido > total && pix > 0) {
-			throw new Error(
-				'Recebimento acima do total está disponível somente ' +
-				'para pagamento integral em dinheiro. ' +
-				'Excedente com PIX exige conferência manual.'
-			);
-		}
+    const pagamento = {
+        total,
+        pix,
+        dinheiro,
+        totalRecebido,
+        saldo: Math.max(total - totalRecebido, 0),
+        excedente: Math.max(totalRecebido - total, 0),
+        parcial: totalRecebido < total,
+        modo: pix > 0 && dinheiro > 0
+            ? 'PIX + Dinheiro'
+            : pix > 0
+                ? 'PIX'
+                : 'Dinheiro'
+    };
 
-		if (pix > 0 && dinheiro > 0) {
-			const config = gcConfiguracao();
+    if (pagamento.parcial || pagamento.modo === 'PIX + Dinheiro') {
+        const config = gcConfiguracao();
 
-			const situacaoConfirmadoId = String(
-				process.env.GESTAOCLICK_SITUACAO_CONFIRMADO_ID || ''
-			).trim();
+        const situacaoConfirmadoId = String(
+            process.env.GESTAOCLICK_SITUACAO_CONFIRMADO_ID || ''
+        ).trim();
 
-			if (!/^\d+$/.test(situacaoConfirmadoId)) {
-				throw new Error(
-					'Configure GESTAOCLICK_SITUACAO_CONFIRMADO_ID no Railway.'
-				);
-			}
+        if (!/^\d+$/.test(situacaoConfirmadoId)) {
+            throw new Error(
+                'Configure GESTAOCLICK_SITUACAO_CONFIRMADO_ID no Railway.'
+            );
+        }
 
-			if (
-				config.GESTAOCLICK_FORMA_PIX_ID ===
-				config.GESTAOCLICK_FORMA_DINHEIRO_ID
-			) {
-				throw new Error('PIX e Dinheiro precisam ter IDs diferentes.');
-			}
+        if (
+            config.GESTAOCLICK_FORMA_PIX_ID ===
+            config.GESTAOCLICK_FORMA_DINHEIRO_ID
+        ) {
+            throw new Error('PIX e Dinheiro precisam ter IDs diferentes.');
+        }
 
-			return {
-				total,
-				pix,
-				dinheiro,
-				modo: 'PIX + Dinheiro',
-				formaPixId: config.GESTAOCLICK_FORMA_PIX_ID,
-				formaDinheiroId: config.GESTAOCLICK_FORMA_DINHEIRO_ID,
-				situacaoConfirmadoId
-			};
-		}
+        pagamento.formaPixId = config.GESTAOCLICK_FORMA_PIX_ID;
+        pagamento.formaDinheiroId = config.GESTAOCLICK_FORMA_DINHEIRO_ID;
+        pagamento.situacaoConfirmadoId = situacaoConfirmadoId;
+    }
 
-		return {
-			total,
-			totalRecebido,
-			excedente: totalRecebido - total,
-			modo: pix === total ? 'PIX' : 'Dinheiro'
-		};
-	}
+    return pagamento;
+}
 
 // Histórico persistente: impede repetir uma tentativa de baixa
 // cujo resultado ficou incerto.
@@ -4280,6 +4282,55 @@ async function gcApiTela(metodo, recebimentoId, corpo) {
     return resultado;
 }
 
+function gcParcelasEsperadas(dados) {
+    const p = dados.pagamento;
+    const parcelas = [];
+
+    if (p.dinheiro > 0) {
+        parcelas.push({
+            valor: p.dinheiro,
+            forma: String(p.formaDinheiroId),
+            liquidado: '1'
+        });
+    }
+
+    if (p.pix > 0) {
+        parcelas.push({
+            valor: p.pix,
+            forma: String(p.formaPixId),
+            liquidado: '1'
+        });
+    }
+
+    if (p.parcial) {
+        parcelas.push({
+            valor: p.saldo,
+            forma: String(dados.recebimento.forma_pagamento_id || ''),
+            liquidado: '0'
+        });
+    }
+
+    const soma = parcelas.reduce((total, parcela) => {
+        if (
+            !Number.isSafeInteger(parcela.valor) ||
+            parcela.valor <= 0 ||
+            !/^\d+$/.test(parcela.forma)
+        ) {
+            throw new Error('Dados inválidos para gerar as parcelas.');
+        }
+
+        return total + parcela.valor;
+    }, 0);
+
+    if (parcelas.length < 2 || soma !== p.total) {
+        throw new Error(
+            'A soma das parcelas precisa corresponder ao total da venda.'
+        );
+    }
+
+    return parcelas;
+}
+
 async function gcPrepararPagamentoMisto(dados) {
     const { recebimento: r, venda, pagamento: p, config } = dados;
 
@@ -4346,48 +4397,67 @@ async function gcPrepararPagamentoMisto(dados) {
         );
     }
 
-    const hoje = require('luxon').DateTime
-        .now()
-        .setZone('America/Sao_Paulo')
-        .toFormat('dd/MM/yyyy');
+	const hoje = require('luxon').DateTime
+		.now()
+		.setZone('America/Sao_Paulo')
+		.toFormat('dd/MM/yyyy');
 
-    Object.assign(m, {
-        ocorrencia: 'P',
-        tipo_parcela: 'D',
-        repeticao: 'M',
-        quantidade: '2',
-        data_primeira_parcela: hoje,
-        intervalo_dias: ''
-    });
+	const esperadas = gcParcelasEsperadas(dados);
+	const situacaoAberta = String(m.situacao_id || '');
 
-    registro.MovimentacoesFinanceirasParcela = [
-        {
-            chave: 0.13801,
-            data_vencimento: hoje,
-            valor: gcValorTela(p.dinheiro),
-            forma_pagamento_id: p.formaDinheiroId,
-            nome_forma_pagamento: 'Dinheiro',
-            conta_bancaria_id: config.GESTAOCLICK_CONTA_BANCARIA_ID,
-            nome_conta_bancaria: String(m.nome_conta_bancaria || ''),
-            situacao_id: p.situacaoConfirmadoId,
-            baixado: 1,
-            observacoes: ''
-        },
-        {
-            chave: 0.13802,
-            data_vencimento: hoje,
-            valor: gcValorTela(p.pix),
-            forma_pagamento_id: p.formaPixId,
-            nome_forma_pagamento: 'Pix',
-            conta_bancaria_id: config.GESTAOCLICK_CONTA_BANCARIA_ID,
-            nome_conta_bancaria: String(m.nome_conta_bancaria || ''),
-            situacao_id: p.situacaoConfirmadoId,
-            baixado: 1,
-            observacoes: ''
-        }
-    ];
+	if (
+		p.parcial &&
+		(
+			!/^\d+$/.test(situacaoAberta) ||
+			situacaoAberta === p.situacaoConfirmadoId ||
+			!m.data_vencimento
+		)
+	) {
+		throw new Error(
+			'Não foi possível identificar a situação ou o vencimento do saldo em aberto.'
+		);
+	}
 
-    return { data: registro };
+	Object.assign(m, {
+		ocorrencia: 'P',
+		tipo_parcela: 'D',
+		repeticao: 'M',
+		quantidade: String(esperadas.length),
+		data_primeira_parcela: hoje,
+		intervalo_dias: ''
+	});
+
+	registro.MovimentacoesFinanceirasParcela = esperadas.map(
+		(parcela, indice) => {
+			const recebida = parcela.liquidado === '1';
+
+			const nomeForma = !recebida
+				? String(m.nome_forma_pagamento || '')
+				: parcela.forma === p.formaPixId
+					? 'Pix'
+					: 'Dinheiro';
+
+			return {
+				chave: 0.926601 + indice / 1000000,
+				data_vencimento: recebida ? hoje : m.data_vencimento,
+				valor: gcValorTela(parcela.valor),
+				forma_pagamento_id: parcela.forma,
+				nome_forma_pagamento: nomeForma,
+				conta_bancaria_id: config.GESTAOCLICK_CONTA_BANCARIA_ID,
+				nome_conta_bancaria: String(m.nome_conta_bancaria || ''),
+				situacao_id: recebida
+					? p.situacaoConfirmadoId
+					: situacaoAberta,
+				baixado: recebida ? 1 : 0,
+				observacoes: recebida
+					? 'Pagamento recebido na conferência da entrega.'
+					: 'Saldo restante da venda ' + venda.codigo +
+					  '. Ainda não recebido.'
+			};
+		}
+	);
+
+	return { data: registro };
 }
 
 async function gcVerificarPagamentoMisto(dados) {
@@ -4410,47 +4480,68 @@ async function gcVerificarPagamentoMisto(dados) {
         );
     });
 
-    const esperadas = new Map([
-        [p.formaDinheiroId, p.dinheiro],
-        [p.formaPixId, p.pix]
-    ]);
+    const faltantes = gcParcelasEsperadas(dados);
 
     if (
-        parcelas.length !== 2 ||
-        new Set(parcelas.map(r => String(r.id))).size !== 2 ||
+        parcelas.length !== faltantes.length ||
+        new Set(parcelas.map(r => String(r.id))).size !== parcelas.length ||
         !parcelas.some(r => String(r.id) === String(recebimento.id))
     ) {
         throw new Error(
-            'Não foi possível identificar exatamente as duas parcelas.'
+            'Não foi possível identificar exatamente as parcelas esperadas.'
         );
     }
 
     for (const r of parcelas) {
-        const forma = String(r.forma_pagamento_id);
-        const valorEsperado = esperadas.get(forma);
-
         if (
-            valorEsperado === undefined ||
-            String(r.liquidado) !== '1' ||
             String(r.conta_bancaria_id) !==
                 config.GESTAOCLICK_CONTA_BANCARIA_ID ||
             String(r.plano_contas_id) !==
                 String(recebimento.plano_contas_id) ||
-            gcCentavos(r.valor) !== valorEsperado ||
-            gcCentavos(r.valor_total) !== valorEsperado ||
             ['juros', 'desconto', 'taxa_banco', 'taxa_operadora']
                 .some(campo => gcCentavos(r[campo] ?? 0) !== 0)
         ) {
             throw new Error(
-                'As parcelas retornadas não correspondem ao pagamento enviado.'
+                'Uma parcela retornou com conta, categoria ou encargos diferentes.'
             );
         }
 
-        esperadas.delete(forma);
+        const indice = faltantes.findIndex(esperada =>
+            String(r.forma_pagamento_id) === esperada.forma &&
+            String(r.liquidado) === esperada.liquidado &&
+            gcCentavos(r.valor) === esperada.valor &&
+            gcCentavos(r.valor_total) === esperada.valor
+        );
+
+        if (indice < 0) {
+            throw new Error(
+                'Os valores ou as situações das parcelas não correspondem ao envio.'
+            );
+        }
+
+        faltantes.splice(indice, 1);
     }
 
-    if (esperadas.size !== 0) {
-        throw new Error('Falta confirmar uma das formas de pagamento.');
+    if (faltantes.length) {
+        throw new Error('Faltam parcelas na verificação do pagamento.');
+    }
+
+    const consultaVenda = await gcApi(
+        'GET',
+        `/vendas/${encodeURIComponent(venda.id)}`,
+        {
+            loja_id: config.GESTAOCLICK_LOJA_ID,
+            tipo: 'vendas_balcao'
+        }
+    );
+
+    if (
+        String(consultaVenda.data?.id) !== String(venda.id) ||
+        gcCentavos(consultaVenda.data?.valor_total) !== p.total
+    ) {
+        throw new Error(
+            'Não foi possível confirmar a preservação do valor original da venda.'
+        );
     }
 }
 
@@ -4576,6 +4667,19 @@ app.get(
                         }</strong>
                     </p>
                 ` : ''}
+				
+				${dados.pagamento.parcial ? `
+					<p style="color: #f59e0b; font-weight: bold;">
+						Baixa parcial:
+						${moedaEntregas(dados.pagamento.totalRecebido / 100)}
+						serão confirmados.
+					</p>
+
+					<p style="color: #f59e0b; font-weight: bold;">
+						Será criada uma parcela em aberto de
+						${moedaEntregas(dados.pagamento.saldo / 100)}.
+					</p>
+				` : ''}
 
                 <p>Confirme somente depois de conferir o dinheiro
                 ou o recebimento do PIX no banco.</p>
@@ -4631,8 +4735,10 @@ app.post(
                 );
             }
 			
-            const pagamentoMisto =
-                dados.pagamento.modo === 'PIX + Dinheiro';
+            // Usa parcelamento para pagamento misto ou parcial.
+			const pagamentoMisto =
+				dados.pagamento.modo === 'PIX + Dinheiro' ||
+				dados.pagamento.parcial === true;
 
             // Consulta e valida antes de registrar a tentativa.
             // Token inválido nesta etapa não bloqueia uma futura tentativa.
@@ -4795,10 +4901,13 @@ app.post(
             }
 
             await db.execute(`
-                UPDATE entregas_gc_baixas
-                SET status = 'confirmado'
-                WHERE recebimento_id = ?
-            `, [recebimentoId]);
+				UPDATE entregas_gc_baixas
+				SET status = ?
+				WHERE recebimento_id = ?
+			`, [
+				dados.pagamento.parcial ? 'parcial_confirmado' : 'confirmado',
+				recebimentoId
+			]);
 
             const dataRetornoGC =
 				dados.entrega.data_rota instanceof Date
@@ -6822,6 +6931,20 @@ app.get(
 						return `
 							<p style="color:#4ade80; font-weight:bold;">
 								✓ Pedido ${pedido}: pagamento confirmado no GestãoClick
+							</p>
+						`;
+					}
+					
+					if (statusBaixa === 'parcial_confirmado') {
+						return `
+							<p style="color:#f59e0b; font-weight:bold;">
+								Pedido ${pedido}: pagamento parcial confirmado no GestãoClick.
+								Existe saldo em aberto.
+							</p>
+
+							<p style="color:#ccc;">
+								Quando receber o restante, faça a baixa do saldo
+								diretamente no GestãoClick.
 							</p>
 						`;
 					}
