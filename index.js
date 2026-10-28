@@ -4243,6 +4243,37 @@ async function gcApiTela(metodo, recebimentoId, corpo) {
     } catch (erro) {
         // Não repassa o objeto Axios: ele contém o token.
         const status = Number(erro.response?.status);
+		
+		if ([301, 302, 303, 307, 308].includes(status)) {
+			const destino = erro.response?.headers?.location;
+			let destinoSeguro = 'Não informado';
+
+			if (destino) {
+				try {
+					const url = new URL(
+						destino,
+						'https://erp.api.click.app'
+					);
+
+					// Não registra parâmetros que possam conter dados de sessão.
+					destinoSeguro = url.origin + url.pathname;
+				} catch {
+					destinoSeguro = 'Endereço não reconhecido';
+				}
+			}
+
+			console.error('Redirecionamento do GestãoClick:', {
+				metodo,
+				recebimentoId,
+				status,
+				destino: destinoSeguro
+			});
+
+			throw new Error(
+				'O GestãoClick redirecionou a solicitação. ' +
+				'Confira o destino no log para verificar se a sessão expirou.'
+			);
+		}
 
         if (status === 401 || status === 403) {
             throw new Error(
