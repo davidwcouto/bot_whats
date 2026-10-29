@@ -6620,24 +6620,93 @@ let tabelaComprovantesRotaPronta = null;
 
 function prepararComprovantesRota() {
     if (!tabelaComprovantesRotaPronta) {
-        tabelaComprovantesRotaPronta = db.execute(`
-            CREATE TABLE IF NOT EXISTS entregas_comprovantes_cloud (
-                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                entrega_id INT NOT NULL,
-                pedidos_ids TEXT NOT NULL,
-                nome VARCHAR(255) NOT NULL,
-                tipo VARCHAR(50) NOT NULL,
-                public_id VARCHAR(255) NOT NULL,
-                criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_comprovante_entrega (entrega_id)
-            )
-        `).catch(erro => {
+        tabelaComprovantesRotaPronta = (async () => {
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS entregas_comprovantes_cloud (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    entrega_id INT NOT NULL,
+                    pedidos_ids TEXT NOT NULL,
+                    nome VARCHAR(255) NOT NULL,
+                    tipo VARCHAR(50) NOT NULL,
+                    public_id VARCHAR(255) NOT NULL,
+                    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_comprovante_entrega (entrega_id)
+                )
+            `);
+
+            const alteracoes = [
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN valor_centavos BIGINT NULL`,
+
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN leitura_status VARCHAR(20)
+                 NOT NULL DEFAULT 'pendente'`,
+
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN arquivo_hash CHAR(64) NULL UNIQUE`
+            ];
+
+            for (const sql of alteracoes) {
+                try {
+                    await db.execute(sql);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') throw erro;
+                }
+            }
+        })().catch(erro => {
             tabelaComprovantesRotaPronta = null;
             throw erro;
         });
     }
 
     return tabelaComprovantesRotaPronta;
+}
+
+let leituraComprovanteOcupada = false;
+
+async function lerValorComprovanteRota(buffer, tipo) {
+    // Evita sobrecarregar o servidor com vários OCR simultâneos.
+    // Se estiver ocupado, salva o arquivo com valor pendente.
+    if (leituraComprovanteOcupada) return null;
+
+    leituraComprovanteOcupada = true;
+
+    try {
+        return await new Promise(resolve => {
+            const processo = require('child_process').execFile(
+                process.execPath,
+                [
+                    require('path').join(__dirname, 'ler-comprovante.js'),
+                    tipo
+                ],
+                {
+                    timeout: 45000,
+                    killSignal: 'SIGKILL',
+                    maxBuffer: 1024 * 1024
+                },
+                (erro, stdout) => {
+                    if (erro) return resolve(null);
+
+                    try {
+                        const { valor } = JSON.parse(stdout);
+
+                        resolve(
+                            Number.isSafeInteger(valor) && valor > 0
+                                ? valor
+                                : null
+                        );
+                    } catch {
+                        resolve(null);
+                    }
+                }
+            );
+
+            processo.stdin.on('error', () => {});
+            processo.stdin.end(buffer);
+        });
+    } finally {
+        leituraComprovanteOcupada = false;
+    }
 }
 
 function enviarComprovanteRotaCloud(buffer, tipo) {
@@ -6826,7 +6895,9 @@ app.get(
                     c.id,
                     c.entrega_id,
                     c.pedidos_ids,
-                    c.nome
+					c.nome,
+					c.valor_centavos,
+					c.leitura_status
                 FROM entregas_comprovantes_cloud c
                 WHERE EXISTS (
                     SELECT 1
@@ -7100,19 +7171,102 @@ app.get(
                     return vinculados.some(id => ids.has(String(id)));
                 });
 
-                const listaAnexos = anexos.length
-                    ? anexos.map(c => `
-                        <li>
-                            <a
-                                href="/entregas/comprovantes-loja/${Number(c.id)}"
-                                target="_blank"
-                                rel="noopener"
-                            >
-                                ${escaparHtml(c.nome)}
-                            </a>
-                        </li>
-                    `).join('')
-                    : '<li>Nenhum comprovante anexado.</li>';
+                const totalComprovantes = anexos.reduce((soma, c) => {
+					if (
+						c.leitura_status === 'ignorado' ||
+						c.valor_centavos === null
+					) {
+						return soma;
+					}
+
+					return soma + Number(c.valor_centavos);
+				}, 0);
+
+				const leiturasPendentes = anexos.filter(c =>
+					c.leitura_status !== 'ignorado' &&
+					c.valor_centavos === null
+				).length;
+
+				const diferencaComprovantes = pix - totalComprovantes;
+
+				const listaAnexos = anexos.length
+					? anexos.map(c => {
+						const temValor = c.valor_centavos !== null;
+						const ignorado = c.leitura_status === 'ignorado';
+
+						const valorCampo = temValor
+							? (Number(c.valor_centavos) / 100).toFixed(2).replace('.', ',')
+							: '';
+
+						const situacaoLeitura = ignorado
+							? 'Fora da soma'
+							: !temValor
+								? 'Valor não identificado — preencha abaixo'
+								: c.leitura_status === 'automatico'
+									? 'Valor identificado automaticamente — confira'
+									: 'Valor conferido manualmente';
+
+						return `
+							<li style="margin-bottom:18px;">
+								<a
+									href="/entregas/comprovantes-loja/${Number(c.id)}"
+									target="_blank"
+									rel="noopener"
+								>
+									${escaparHtml(c.nome)}
+								</a>
+
+								<p style="margin:6px 0; color:#f59e0b;">
+									${situacaoLeitura}
+								</p>
+
+								<form
+									method="post"
+									action="/entregas/comprovantes-loja/${Number(c.id)}/valor"
+									style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;"
+								>
+									${csrfEntregaCampo()}
+
+									<input
+										type="hidden"
+										name="entrega_id"
+										value="${Number(primeiro.id)}"
+									>
+
+									<label>
+										Valor do comprovante
+										<input
+											type="text"
+											name="valor"
+											inputmode="decimal"
+											placeholder="Ex.: 35,00"
+											value="${valorCampo}"
+											style="width:150px; max-width:100%;"
+										>
+									</label>
+
+									<button
+										type="submit"
+										name="acao"
+										value="salvar"
+										style="width:auto;"
+									>
+										Salvar valor
+									</button>
+
+									<button
+										type="submit"
+										name="acao"
+										value="ignorar"
+										style="width:auto; background:#555; color:white;"
+									>
+										Não somar
+									</button>
+								</form>
+							</li>
+						`;
+					}).join('')
+					: '<li>Nenhum comprovante anexado.</li>';
 
                 return `
                     <article
@@ -7178,7 +7332,45 @@ app.get(
 						</div>
 
 						<h3>Comprovantes anexados</h3>
-                        <ul>${listaAnexos}</ul>
+
+						<p>
+							Total dos valores identificados:
+							<strong>${moedaEntregas(totalComprovantes / 100)}</strong>
+						</p>
+
+						<p>
+							PIX informado pelo motoboy:
+							<strong>${moedaEntregas(pix / 100)}</strong>
+						</p>
+
+						${leiturasPendentes > 0 ? `
+							<p style="color:#f59e0b; font-weight:bold;">
+								Soma incompleta: ${leiturasPendentes}
+								comprovante(s) sem valor identificado.
+							</p>
+						` : anexos.some(c => c.leitura_status !== 'ignorado') ? `
+							<p style="color:${
+								diferencaComprovantes === 0 ? '#4ade80' : '#ff4d4f'
+							}; font-weight:bold;">
+								${
+									diferencaComprovantes === 0
+										? 'Os valores dos comprovantes coincidem com o PIX informado.'
+										: diferencaComprovantes > 0
+											? 'Faltam ' +
+											  moedaEntregas(diferencaComprovantes / 100) +
+											  ' em comprovantes.'
+											: 'Os comprovantes excedem o PIX informado em ' +
+											  moedaEntregas(-diferencaComprovantes / 100) + '.'
+								}
+							</p>
+						` : ''}
+
+						<p style="color:#aaa; font-size:14px;">
+							Confira os valores lidos. A soma dos comprovantes não confirma
+							o recebimento no banco.
+						</p>
+
+						<ul>${listaAnexos}</ul>
 
                         <form
                             method="post"
@@ -7452,6 +7644,30 @@ app.post(
             const nome = String(req.file.originalname || 'Comprovante')
                 .replace(/[\x00-\x1f\x7f]/g, '')
                 .slice(0, 255);
+				
+			const arquivoHash = require('crypto')
+				.createHash('sha256')
+				.update(req.file.buffer)
+				.digest('hex');
+
+			const [duplicados] = await db.execute(`
+				SELECT id
+				FROM entregas_comprovantes_cloud
+				WHERE arquivo_hash = ?
+				LIMIT 1
+			`, [arquivoHash]);
+
+			if (duplicados.length) {
+				return res.status(409).send(
+					'Este mesmo arquivo já foi anexado. ' +
+					'Volte à conferência e confira os comprovantes cadastrados.'
+				);
+			}
+
+			const valorLido = await lerValorComprovanteRota(
+				req.file.buffer,
+				tipo
+			);	
 
             const arquivoCloud = await enviarComprovanteRotaCloud(
 				req.file.buffer,
@@ -7465,15 +7681,21 @@ app.post(
 						pedidos_ids,
 						nome,
 						tipo,
-						public_id
+						public_id,
+						arquivo_hash,
+						valor_centavos,
+						leitura_status
 					)
-					VALUES (?, ?, ?, ?, ?)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				`, [
 					req.params.id,
 					JSON.stringify(grupo.map(e => String(e.id))),
 					nome,
 					tipo,
-					arquivoCloud.public_id
+					arquivoCloud.public_id,
+					arquivoHash,
+					valorLido,
+					valorLido === null ? 'pendente' : 'automatico'
 				]);
 			} catch (erroBanco) {
 				// Preserva o arquivo caso o banco tenha gravado,
@@ -7502,6 +7724,107 @@ app.post(
             return res.status(500).send(
                 'Não foi possível confirmar o salvamento. ' +
                 'Volte à rota e confira a lista de comprovantes antes de tentar novamente.'
+            );
+        }
+    }
+);
+
+app.post(
+    '/entregas/comprovantes-loja/:id/valor',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            if (
+                !/^\d+$/.test(String(req.params.id)) ||
+                !/^\d+$/.test(String(req.body.entrega_id))
+            ) {
+                return res.status(400).send('Identificação inválida.');
+            }
+
+            await prepararComprovantesRota();
+
+            const [registros] = await db.execute(`
+                SELECT id, pedidos_ids
+                FROM entregas_comprovantes_cloud
+                WHERE id = ?
+            `, [req.params.id]);
+
+            const comprovante = registros[0];
+            const grupo = await buscarGrupoConferenciaLoja(
+                req.body.entrega_id
+            );
+
+            if (!comprovante || !grupo?.length) {
+                return res.status(404).send('Comprovante ou entrega não encontrado.');
+            }
+
+            const vinculados = JSON.parse(comprovante.pedidos_ids);
+            const pertenceAoGrupo = grupo.some(e =>
+                vinculados.includes(String(e.id))
+            );
+
+            if (!pertenceAoGrupo) {
+                return res.status(400).send(
+                    'Este comprovante não pertence ao cliente selecionado.'
+                );
+            }
+
+            if (req.body.acao === 'ignorar') {
+                await db.execute(`
+                    UPDATE entregas_comprovantes_cloud
+                    SET leitura_status = 'ignorado'
+                    WHERE id = ?
+                `, [req.params.id]);
+            } else if (req.body.acao === 'salvar') {
+                const texto = String(req.body.valor || '').trim();
+
+                if (!/^\d{1,7}(?:[,.]\d{1,2})?$/.test(texto)) {
+                    return res.status(400).send(
+                        'Informe o valor sem separador de milhar. Exemplo: 1250,50.'
+                    );
+                }
+
+                const partes = texto.replace(',', '.').split('.');
+                const valor =
+                    Number(partes[0]) * 100 +
+                    Number((partes[1] || '').padEnd(2, '0'));
+
+                if (
+                    !Number.isSafeInteger(valor) ||
+                    valor <= 0 ||
+                    valor > 999999999
+                ) {
+                    return res.status(400).send('Valor inválido.');
+                }
+
+                await db.execute(`
+                    UPDATE entregas_comprovantes_cloud
+                    SET valor_centavos = ?, leitura_status = 'manual'
+                    WHERE id = ?
+                `, [valor, req.params.id]);
+            } else {
+                return res.status(400).send('Ação inválida.');
+            }
+
+            const primeiro = grupo[0];
+
+            return res.redirect(
+                303,
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + Math.max(...grupo.map(e => Number(e.id)))
+            );
+        } catch (erro) {
+            console.error(
+                'Erro ao corrigir valor do comprovante:',
+                erro.message
+            );
+
+            return res.status(500).send(
+                'Não foi possível confirmar a alteração. Volte e confira o valor.'
             );
         }
     }
