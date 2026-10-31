@@ -42,7 +42,6 @@ const path = require("path");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const express = require('express');
 const qrcode = require("qrcode-terminal");
-const puppeteer = require('puppeteer');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const inicioBot = Math.floor(Date.now() / 1000);	

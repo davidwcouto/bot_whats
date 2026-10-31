@@ -106,11 +106,20 @@ async function lerImagem(buffer) {
         'por'
     );
 
-    if (Number(resultado.data?.confidence || 0) < 65) {
-        return null;
-    }
+    const confianca = Number(resultado.data?.confidence || 0);
+	const valor = identificarValor(resultado.data?.text);
 
-    return identificarValor(resultado.data?.text);
+	console.error('[OCR comprovante]', JSON.stringify({
+		confianca,
+		valorIdentificadoCentavos: valor,
+		motivo: confianca < 65
+			? 'confianca_baixa'
+			: valor === null
+				? 'valor_nao_identificado'
+				: 'identificado'
+	}));
+
+	return confianca >= 65 ? valor : null;
 }
 
 async function executar(buffer, tipo) {
