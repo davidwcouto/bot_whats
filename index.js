@@ -7280,6 +7280,11 @@ app.get(
                                 escaparHtml(e.pedido || '—')
                             ).join(', ')}
                         </p>
+						
+						<p>
+                            Telefone:
+                            ${escaparHtml(primeiro.telefone || 'Não informado')}
+                        </p>
 
                         <p>
                             ${escaparHtml(primeiro.endereco || '')}
