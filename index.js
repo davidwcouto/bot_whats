@@ -636,7 +636,7 @@ const historicoIA = new Map();
 
 async function responderComIA(chatId, mensagemCliente) {
     try {
-		const clienteGestaoClick = await buscarClienteGestaoClick(chatId);
+		const clienteGestaoClick = await buscarClienteGestaoClick(phone);
 
 		console.log(
 			"👤 Resultado da identificação:",
