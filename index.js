@@ -448,11 +448,13 @@ Digite 2️⃣ para atendimento.`;
          * com a opção 3 do seu bot.
          */
         ultimoProdutoConsultado.set(chatId, {
-            Produto: encontradosLimitados[0].nome,
-            Preco: encontradosLimitados[0].valor_venda,
-            Estoque: encontradosLimitados[0].estoque,
-            Imagem: null
-        });
+			Id: encontradosLimitados[0].id,
+			Codigo: encontradosLimitados[0].codigo,
+			Produto: encontradosLimitados[0].nome,
+			Preco: encontradosLimitados[0].valor_venda,
+			Estoque: encontradosLimitados[0].estoque,
+			Imagem: null
+		});
 
         setTimeout(() => {
             ultimoProdutoConsultado.delete(chatId);
