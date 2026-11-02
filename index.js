@@ -117,7 +117,25 @@ function transferirParaHumanoIA(chatId) {
 }
 
 function atendimentoTransferidoIA(chatId) {
-    return chatsTransferidosIA.has(chatId);
+
+    if (!chatsTransferidosIA.has(chatId)) {
+        return false;
+    }
+
+    // Enquanto a pausa estiver ativa, mantém
+    // o atendimento com a equipe humana.
+    if (iaEstaPausada(chatId)) {
+        return true;
+    }
+
+    // Após o prazo, libera automaticamente a IA.
+    chatsTransferidosIA.delete(chatId);
+
+    console.log(
+        `🤖 Atendimento humano expirou. IA liberada: ${chatId}`
+    );
+
+    return false;
 }
 
 function liberarAtendimentoIA(chatId) {
