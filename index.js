@@ -369,6 +369,7 @@ const clientesConsultadosIA = new Map();
 
 async function buscarClienteGestaoClick(chatId) {
     try {
+		console.log("🔍 Identificador recebido:", chatId);
         // Extrai somente os números do WhatsApp
         const telefone = String(chatId)
             .split("@")[0]
