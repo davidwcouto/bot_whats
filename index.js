@@ -1414,7 +1414,11 @@ client.on("message", async (message) => {
 	}
   
     // Respeita a pausa de atendimento humano
-	if (iaEstaPausada(chatId) && !message.hasMedia) {
+	if (
+		iaEstaPausada(chatId) &&
+		!message.hasMedia &&
+		normalizarTexto(message.body || "").trim() !== "falar com ia"
+	) {
 		console.log(`👤 IA pausada para ${phone}.`);
 		return;
 	}
@@ -1471,6 +1475,35 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 	// ========================================
 
 	if (!message.hasMedia) {
+		
+	    // ========================================
+		// CLIENTE SOLICITA RETORNAR PARA A IA
+		// ========================================
+
+		const comandoIA = normalizarTexto(message.body || "").trim();
+
+		if (comandoIA === "falar com ia") {
+
+			// Remove a transferência para atendimento humano
+			liberarAtendimentoIA(chatId);
+
+			// Limpa o histórico da conversa anterior
+			historicoIA.delete(chatId);
+
+			// Libera também os controles antigos
+			atendimentoHumano.delete(chatId);
+			silencedChats.delete(chatId);
+			clientesAtendidos.delete(chatId);
+
+			await enviarMensagemAutomaticaIA(
+				chatId,
+				"🤖 Atendimento com inteligência artificial reativado! Como posso te ajudar?"
+			);
+
+			console.log(`🤖 Cliente reativou a IA: ${chatId}`);
+
+			return;
+		}	
 
 		// Se a equipe estiver atendendo, não responder
 		if (atendimentoTransferidoIA(chatId) || iaEstaPausada(chatId)) {
