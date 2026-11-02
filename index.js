@@ -635,6 +635,12 @@ const historicoIA = new Map();
 
 async function responderComIA(chatId, mensagemCliente) {
     try {
+		const clienteGestaoClick = await buscarClienteGestaoClick(chatId);
+
+		console.log(
+			"👤 Resultado da identificação:",
+			clienteGestaoClick
+		);
         const historicoAnterior = historicoIA.get(chatId) || [];
 
         const entrada = [
