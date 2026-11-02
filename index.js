@@ -631,7 +631,7 @@ const horarioAtendimento = {
     inicio: 9,        // 09:00
     fim: 18,          // 18:00
     minutosFim: 00,   // Até 18:30
-    intervaloInicio: 12,   // Início do intervalo de não atendimento
+    intervaloInicio: 12,   // Início do intervalo de não atendimentoo
     intervaloFim: 12,     // Fim do intervalo de não atendimento
 };
 
