@@ -482,27 +482,23 @@ Digite 2️⃣ para atendimento.`;
             ultimoProdutoConsultado.delete(chatId);
         }, 30 * 60 * 1000);
 
-        let mensagem =
-            `🔎 No estoque temos essas opções para ` +
-            `*${produto.toUpperCase()}*:\n\n`;
+        const numerosEmoji = [
+			"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣",
+			"6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"
+		];
 
-        encontradosLimitados.forEach((item, index) => {
-            mensagem += `${index + 1}️⃣ *${item.nome}*\n`;
-            mensagem +=
-                `💰 R$ ${formatarPreco(item.valor_venda)}\n`;
+		const numeroOpcao = index =>
+			numerosEmoji[index] || `${index + 1}.`;
 
-            if (
-                item.estoque !== undefined &&
-                item.estoque !== null &&
-                item.estoque !== ""
-            )
+		const linhasProdutos = encontradosLimitados.map((item, index) =>
+			`${numeroOpcao(index)} *${item.nome}*\n` +
+			`💰 R$ ${formatarPreco(item.valor_venda)}`
+		);
 
-            mensagem += "\n";
-        });
-
-        mensagem += "Para fazer pedido digite 2️⃣";
-
-        return mensagem;
+		return (
+			`🔎 No estoque temos essas opções para *${produto.toUpperCase()}*:\n\n` +
+			linhasProdutos.join("\n\n")
+		);
 
     } catch (erro) {
         console.error("❌ Erro ao consultar GestãoClick:", {
