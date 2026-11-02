@@ -186,6 +186,8 @@ async function enviarMensagemAutomaticaIA(chatId, texto) {
 }
 let ultimoProdutoConsultado = new Map(); // Guardar o últiimo produto consultadoo
 
+const produtosConsultadosIA = new Map();
+
 // Gera o QR Code para autenticação
 client.on("qr", (qr) => {
     console.log("Escaneie este QR Code no WhatsApp Web:");
@@ -442,6 +444,26 @@ Digite 2️⃣ para atendimento.`;
         }
 
         const encontradosLimitados = encontrados.slice(0, 15);
+		
+		const opcoesProdutos = encontradosLimitados.map((item, index) => ({
+			opcao: index + 1,
+			id: item.id,
+			codigo: item.codigo,
+			nome: item.nome,
+			preco: item.valor_venda,
+			estoque: item.estoque
+		}));
+
+		produtosConsultadosIA.set(chatId, {
+			pesquisa: produto,
+			produtos: opcoesProdutos,
+			consultadoEm: Date.now()
+		});
+
+		console.log(
+			"Produtos consultados pela IA:",
+			JSON.stringify(opcoesProdutos, null, 2)
+		);
 
         /*
          * Guarda o primeiro resultado para manter compatibilidade
