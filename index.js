@@ -367,13 +367,12 @@ function pesquisaValida(pesquisa) {
 
 const clientesConsultadosIA = new Map();
 
-async function buscarClienteGestaoClick(chatId) {
+async function buscarClienteGestaoClick(chatId, telefoneCliente) {
     try {
 		console.log("🔍 Identificador recebido:", chatId);
         // Extrai somente os números do WhatsApp
-        const telefone = String(chatId)
-            .split("@")[0]
-            .replace(/\D/g, "");
+        const telefone = String(telefoneCliente || "")
+			.replace(/\D/g, "");
 
         if (!telefone) {
             return null;
@@ -634,9 +633,12 @@ Digite 2️⃣ para atendimento.`;
 
 const historicoIA = new Map();
 
-async function responderComIA(chatId, mensagemCliente) {
+async function responderComIA(chatId, mensagemCliente, telefoneCliente) {
     try {
-		const clienteGestaoClick = await buscarClienteGestaoClick(phone);
+		const clienteGestaoClick = await buscarClienteGestaoClick(
+			chatId,
+			telefoneCliente
+		);
 
 		console.log(
 			"👤 Resultado da identificação:",
@@ -1690,7 +1692,8 @@ const caminhoImagem = `./fotos/${produto.Imagem}`;
 		// Gera resposta usando OpenAI e GestãoClick
 		const respostaIA = await responderComIA(
 			chatId,
-			mensagemRecebida
+			mensagemRecebida,
+			phone
 		);
 
 		// Verifica novamente se um funcionário assumiu
