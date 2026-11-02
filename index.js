@@ -620,6 +620,36 @@ Regras:
                     output: String(resultado)
                 });
             }
+			
+			// ========================================
+			// RESPOSTA PADRONIZADA DE CONSULTA DE PREÇOS
+			// ========================================
+
+			if (chamadas.length === 1) {
+
+				const resultadoConsulta = itensDaResposta.find(
+					item => item.type === "function_call_output"
+				)?.output;
+
+				if (resultadoConsulta) {
+
+					const textoConsulta = String(resultadoConsulta).trim();
+
+					historicoIA.set(chatId, [
+						...historicoAnterior,
+						{
+							role: "user",
+							content: String(mensagemCliente)
+						},
+						{
+							role: "assistant",
+							content: textoConsulta
+						}
+					].slice(-12));
+
+					return textoConsulta;
+				}
+			}
 
             const segundaResposta = await openai.responses.create({
 				...configuracao,
