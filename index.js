@@ -371,8 +371,19 @@ async function buscarClienteGestaoClick(chatId, telefoneCliente) {
     try {
 		console.log("🔍 Identificador recebido:", chatId);
         // Extrai somente os números do WhatsApp
-        const telefone = String(telefoneCliente || "")
+        let telefone = String(telefoneCliente || "")
 			.replace(/\D/g, "");
+
+		// Remove o código do Brasil somente de números
+		// que tenham 12 ou 13 dígitos e comecem com 55.
+		if (
+			telefone.startsWith("55") &&
+			(telefone.length === 12 || telefone.length === 13)
+		) {
+			telefone = telefone.slice(2);
+		}
+
+		console.log("📱 Telefone para consulta no GestãoClick:", telefone);
 
         if (!telefone) {
             return null;
