@@ -364,6 +364,87 @@ function pesquisaValida(pesquisa) {
 
 }
 
+
+const clientesConsultadosIA = new Map();
+
+async function buscarClienteGestaoClick(chatId) {
+    try {
+        // Extrai somente os números do WhatsApp
+        const telefone = String(chatId)
+            .split("@")[0]
+            .replace(/\D/g, "");
+
+        if (!telefone) {
+            return null;
+        }
+
+        const resposta = await axios.get(
+            "https://api.gestaoclick.com/clientes",
+            {
+                headers: {
+                    "access-token": process.env.GESTAOCLICK_ACCESS_TOKEN,
+                    "secret-access-token": process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN
+                },
+                params: {
+                    telefone: telefone
+                },
+                timeout: 15000
+            }
+        );
+
+        const clientes = resposta.data?.data || [];
+
+        if (!Array.isArray(clientes)) {
+            return null;
+        }
+
+        const cliente = clientes.find(item => {
+            const telefones = [
+                item.telefone,
+                item.celular
+            ]
+                .filter(Boolean)
+                .map(valor => String(valor).replace(/\D/g, ""));
+
+            return telefones.some(numero =>
+                numero === telefone ||
+                numero.endsWith(telefone) ||
+                telefone.endsWith(numero)
+            );
+        });
+
+        if (!cliente) {
+            console.log(
+                `🔎 Cliente não encontrado no GestãoClick: ${telefone}`
+            );
+            return null;
+        }
+
+        const dadosCliente = {
+            id: cliente.id,
+            nome: cliente.nome,
+            telefone: telefone
+        };
+
+        clientesConsultadosIA.set(chatId, dadosCliente);
+
+        console.log(
+            "👤 Cliente identificado no GestãoClick:",
+            JSON.stringify(dadosCliente, null, 2)
+        );
+
+        return dadosCliente;
+
+    } catch (erro) {
+        console.error(
+            "❌ Erro ao consultar cliente no GestãoClick:",
+            erro.response?.data || erro.message
+        );
+
+        return null;
+    }
+}
+
 async function buscarPreco(produto, chatId) {
     if (!produto) {
         return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
