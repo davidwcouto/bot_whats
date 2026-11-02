@@ -571,10 +571,16 @@ Regras:
             }
 
             const segundaResposta = await openai.responses.create({
-                ...configuracao,
-                tool_choice: "none",
-                input: [...entrada, ...itensDaResposta]
-            });
+				...configuracao,
+
+				previous_response_id: primeiraResposta.id,
+
+				tool_choice: "none",
+
+				input: itensDaResposta.filter(
+					item => item.type === "function_call_output"
+				)
+			});
 
             itensDaResposta.push(...segundaResposta.output);
         }
@@ -596,9 +602,19 @@ Regras:
         }
 
         historicoIA.set(
-            chatId,
-            [...entrada, ...itensDaResposta].slice(-20)
-        );
+			chatId,
+			[
+				...historicoAnterior,
+				{
+					role: "user",
+					content: String(mensagemCliente)
+				},
+				{
+					role: "assistant",
+					content: textoIA
+				}
+			].slice(-12)
+		);
 
         return textoIA;
 
