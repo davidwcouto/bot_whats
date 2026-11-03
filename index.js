@@ -9458,6 +9458,64 @@ app.get("/health", (req, res) => {
 });
 
 app.get(
+    '/entregas/teste-recebimento/:id',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const id = String(req.params.id || '').trim();
+
+            if (!/^\d+$/.test(id)) {
+                return res.status(400).json({
+                    erro: 'ID inválido.'
+                });
+            }
+
+            const config = gcConfiguracao();
+
+            const resposta = await gcApi(
+                'GET',
+                '/recebimentos/' + encodeURIComponent(id),
+                { loja_id: config.GESTAOCLICK_LOJA_ID }
+            );
+
+            const r = resposta.data;
+
+            if (!r || String(r.id) !== id) {
+                return res.status(404).json({
+                    erro: 'A API não retornou o recebimento solicitado.'
+                });
+            }
+
+            return res.json({
+                aviso: 'Consulta somente. Nenhum dado foi alterado.',
+                loja_configurada: config.GESTAOCLICK_LOJA_ID,
+                recebimento: {
+                    id: r.id,
+                    descricao: r.descricao,
+                    cliente_id: r.cliente_id,
+                    nome_cliente: r.nome_cliente,
+                    loja_id: r.loja_id,
+                    nome_loja: r.nome_loja,
+                    valor: r.valor,
+                    valor_total: r.valor_total,
+                    liquidado: r.liquidado,
+                    forma_pagamento_id: r.forma_pagamento_id,
+                    nome_forma_pagamento: r.nome_forma_pagamento,
+                    data_vencimento: r.data_vencimento,
+                    data_liquidacao: r.data_liquidacao
+                }
+            });
+        } catch (erro) {
+            return res.status(502).json({
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.get(
     '/entregas/teste-api-pagamento/:pedido',
     autenticarEntregas,
     async (req, res) => {
