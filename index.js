@@ -2749,6 +2749,40 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
                 Cancelar
             </a>
         </form>
+		<script>
+		(function () {
+			const formulario = document.querySelector(
+				'form[action="/financeiro/pagamentos"]'
+			);
+
+			if (!formulario) return;
+
+			const forma = formulario.querySelector('[name="forma"]');
+			const observacao = formulario.querySelector('[name="observacao"]');
+
+			function atualizarObservacao() {
+				const devolucao =
+					forma.value === 'Devolução de Mercadorias';
+
+				observacao.required = devolucao;
+
+				observacao.placeholder = devolucao
+					? 'Obrigatório: informe as peças devolvidas e o motivo.'
+					: 'Ex.: Pagamento parcial';
+
+				observacao.setCustomValidity(
+					devolucao && !observacao.value.trim()
+						? 'Preencha a observação da devolução de mercadorias.'
+						: ''
+				);
+			}
+
+			forma.addEventListener('change', atualizarObservacao);
+			observacao.addEventListener('input', atualizarObservacao);
+
+			atualizarObservacao();
+		})();
+		</script>
     </div>
 </body>
 </html>
