@@ -2775,11 +2775,24 @@ app.post('/financeiro/pagamentos', async (req, res) => {
         const forma =
             String(req.body.forma || '').trim();
 
-        const observacao =
-            String(
-                req.body.observacao ||
-                'Pagamento parcial'
-            ).trim();
+        const observacaoInformada =
+			String(req.body.observacao || '').trim();
+
+		if (
+			forma === 'Devolução de Mercadorias' &&
+			!observacaoInformada
+		) {
+			return res.status(400).send(`
+				<h2>Informe a observação da devolução de mercadorias.</h2>
+				<p>Descreva quais peças foram devolvidas e o motivo.</p>
+				<button type="button" onclick="history.back()">
+					Voltar ao formulário
+				</button>
+			`);
+		}
+
+		const observacao =
+			observacaoInformada || 'Pagamento parcial';
 
         if (
             !Number.isInteger(clienteId) ||
