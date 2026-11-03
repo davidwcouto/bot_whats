@@ -9484,7 +9484,9 @@ app.get(
 			
 			const lista = await gcListar('/recebimentos', {
 				loja_id: config.GESTAOCLICK_LOJA_ID,
-				cliente_id: r.cliente_id
+				cliente_id: r.cliente_id,
+				data_inicio: '2026-10-01',
+				data_fim: '2026-11-30'
 			});
 
 			const encontradoNaLista = lista.find(item =>
