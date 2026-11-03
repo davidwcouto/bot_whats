@@ -9481,6 +9481,15 @@ app.get(
             );
 
             const r = resposta.data;
+			
+			const lista = await gcListar('/recebimentos', {
+				loja_id: config.GESTAOCLICK_LOJA_ID,
+				cliente_id: r.cliente_id
+			});
+
+			const encontradoNaLista = lista.find(item =>
+				String(item.id) === id
+			);
 
             if (!r || String(r.id) !== id) {
                 return res.status(404).json({
@@ -9491,6 +9500,18 @@ app.get(
             return res.json({
                 aviso: 'Consulta somente. Nenhum dado foi alterado.',
                 loja_configurada: config.GESTAOCLICK_LOJA_ID,
+				diagnostico_listagem: {
+					quantidade_retornada: lista.length,
+					encontrou_id: Boolean(encontradoNaLista),
+					registro_encontrado: encontradoNaLista
+						? {
+							id: encontradoNaLista.id,
+							descricao: encontradoNaLista.descricao,
+							cliente_id: encontradoNaLista.cliente_id,
+							loja_id: encontradoNaLista.loja_id
+						}
+						: null
+				},
                 recebimento: {
                     id: r.id,
                     descricao: r.descricao,
