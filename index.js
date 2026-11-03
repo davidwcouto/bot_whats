@@ -888,21 +888,30 @@ function montarMensagemPedido(dados) {
 }
 
 function montarMensagemSaldo(dados) {
-  return (
+    const devolucao =
+        dados.formaPagamento === 'Devolução de Mercadorias';
+
+    const observacao = String(dados.observacao || '').trim();
+
+    const detalhes = devolucao && observacao
+        ? '\n\n📦 Peças devolvidas / observação:\n' + observacao
+        : '';
+
+    return (
 `💳 *ATUALIZAÇÃO DA SUA CONTA*
 
-💰 Valor recebido:
+💰 ${devolucao ? 'Valor abatido' : 'Valor recebido'}:
 R$ ${dados.valorPagamento}
 
 📌 Forma de pagamento:
-${dados.formaPagamento}
+${dados.formaPagamento}${detalhes}
 
 💳 Saldo atual:
 *R$ ${dados.saldo}*
 
 Obrigado pela preferência!
 *COUTECH CELL*`
-  );
+    );
 }
 
 async function enviarSaldoWhatsApp({
@@ -910,7 +919,8 @@ async function enviarSaldoWhatsApp({
   cliente,
   valorPagamento,
   formaPagamento,
-  saldo
+  saldo,
+  observacao
 }) {
   if (!client.info) {
     throw new Error('WhatsApp não está conectado');
@@ -927,12 +937,13 @@ async function enviarSaldoWhatsApp({
     );
   }
 
-  const mensagem = montarMensagemSaldo({
-    cliente,
-    valorPagamento,
-    formaPagamento,
-    saldo
-  });
+	const mensagem = montarMensagemSaldo({
+		cliente,
+		valorPagamento,
+		formaPagamento,
+		saldo,
+		observacao
+	});
 
   await client.sendMessage(
     numeroWhatsApp._serialized,
@@ -2767,7 +2778,7 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
 				observacao.required = devolucao;
 
 				observacao.placeholder = devolucao
-					? 'Obrigatório: informe as peças devolvidas e o motivo.'
+					? 'Obrigatório: informe as peças devolvidas.'
 					: 'Ex.: Pagamento parcial';
 
 				observacao.setCustomValidity(
@@ -2943,14 +2954,14 @@ app.post('/financeiro/pagamentos', async (req, res) => {
         );
 		
 				try {
-		  await enviarSaldoWhatsApp({
+		 await enviarSaldoWhatsApp({
 			telefone: cliente.telefone,
 			cliente: cliente.nome,
-			valorPagamento:
-			  formatarValorConta(valorPagamento),
+			valorPagamento: formatarValorConta(valorPagamento),
 			formaPagamento: forma,
-			saldo: formatarValorConta(novoSaldo)
-		  });
+			saldo: formatarValorConta(novoSaldo),
+			observacao
+		});
 
 		} catch (erroWhatsApp) {
 		  /*

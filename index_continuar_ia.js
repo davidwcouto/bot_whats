@@ -1285,21 +1285,30 @@ function montarMensagemPedido(dados) {
 }
 
 function montarMensagemSaldo(dados) {
-  return (
+    const devolucao =
+        dados.formaPagamento === 'Devolução de Mercadorias';
+
+    const observacao = String(dados.observacao || '').trim();
+
+    const detalhes = devolucao && observacao
+        ? '\n\n📦 Peças devolvidas / observação:\n' + observacao
+        : '';
+
+    return (
 `💳 *ATUALIZAÇÃO DA SUA CONTA*
 
-💰 Valor recebido:
+💰 ${devolucao ? 'Valor abatido' : 'Valor recebido'}:
 R$ ${dados.valorPagamento}
 
 📌 Forma de pagamento:
-${dados.formaPagamento}
+${dados.formaPagamento}${detalhes}
 
 💳 Saldo atual:
 *R$ ${dados.saldo}*
 
 Obrigado pela preferência!
 *COUTECH CELL*`
-  );
+    );
 }
 
 async function enviarSaldoWhatsApp({
@@ -1307,7 +1316,8 @@ async function enviarSaldoWhatsApp({
   cliente,
   valorPagamento,
   formaPagamento,
-  saldo
+  saldo,
+  observacao
 }) {
   if (!client.info) {
     throw new Error('WhatsApp não está conectado');
@@ -1324,12 +1334,13 @@ async function enviarSaldoWhatsApp({
     );
   }
 
-  const mensagem = montarMensagemSaldo({
-    cliente,
-    valorPagamento,
-    formaPagamento,
-    saldo
-  });
+	const mensagem = montarMensagemSaldo({
+		cliente,
+		valorPagamento,
+		formaPagamento,
+		saldo,
+		observacao
+	});
 
   await client.sendMessage(
     numeroWhatsApp._serialized,
