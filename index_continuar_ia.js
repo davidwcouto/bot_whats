@@ -3143,6 +3143,40 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
                 Cancelar
             </a>
         </form>
+		<script>
+		(function () {
+			const formulario = document.querySelector(
+				'form[action="/financeiro/pagamentos"]'
+			);
+
+			if (!formulario) return;
+
+			const forma = formulario.querySelector('[name="forma"]');
+			const observacao = formulario.querySelector('[name="observacao"]');
+
+			function atualizarObservacao() {
+				const devolucao =
+					forma.value === 'Devolução de Mercadorias';
+
+				observacao.required = devolucao;
+
+				observacao.placeholder = devolucao
+					? 'Obrigatório: informe as peças devolvidas e o motivo.'
+					: 'Ex.: Pagamento parcial';
+
+				observacao.setCustomValidity(
+					devolucao && !observacao.value.trim()
+						? 'Preencha a observação da devolução de mercadorias.'
+						: ''
+				);
+			}
+
+			forma.addEventListener('change', atualizarObservacao);
+			observacao.addEventListener('input', atualizarObservacao);
+
+			atualizarObservacao();
+		})();
+		</script>
     </div>
 </body>
 </html>
@@ -3169,11 +3203,24 @@ app.post('/financeiro/pagamentos', async (req, res) => {
         const forma =
             String(req.body.forma || '').trim();
 
-        const observacao =
-            String(
-                req.body.observacao ||
-                'Pagamento parcial'
-            ).trim();
+        const observacaoInformada =
+			String(req.body.observacao || '').trim();
+
+		if (
+			forma === 'Devolução de Mercadorias' &&
+			!observacaoInformada
+		) {
+			return res.status(400).send(`
+				<h2>Informe a observação da devolução de mercadorias.</h2>
+				<p>Descreva quais peças foram devolvidas e o motivo.</p>
+				<button type="button" onclick="history.back()">
+					Voltar ao formulário
+				</button>
+			`);
+		}
+
+		const observacao =
+			observacaoInformada || 'Pagamento parcial';
 
         if (
             !Number.isInteger(clienteId) ||
@@ -3290,14 +3337,14 @@ app.post('/financeiro/pagamentos', async (req, res) => {
         );
 		
 				try {
-		  await enviarSaldoWhatsApp({
+		 await enviarSaldoWhatsApp({
 			telefone: cliente.telefone,
 			cliente: cliente.nome,
-			valorPagamento:
-			  formatarValorConta(valorPagamento),
+			valorPagamento: formatarValorConta(valorPagamento),
 			formaPagamento: forma,
-			saldo: formatarValorConta(novoSaldo)
-		  });
+			saldo: formatarValorConta(novoSaldo),
+			observacao
+		});
 
 		} catch (erroWhatsApp) {
 		  /*
@@ -4258,6 +4305,30 @@ function gcApi(metodo, caminho, parametros = {}, corpo) {
     return tarefa;
 }
 
+function gcPeriodoRecebimentos(venda) {
+    const hoje = require('luxon').DateTime
+        .now()
+        .setZone('America/Sao_Paulo')
+        .toISODate();
+
+    const datas = [
+        hoje,
+        venda.data,
+        ...(venda.pagamentos || []).map(item =>
+            item.pagamento?.data_vencimento
+        )
+    ]
+        .map(valor => String(valor || '').slice(0, 10))
+        .filter(valor => /^\d{4}-\d{2}-\d{2}$/.test(valor));
+
+    const anos = datas.map(data => Number(data.slice(0, 4)));
+
+    return {
+        data_inicio: Math.min(...anos) + '-01-01',
+        data_fim: (Math.max(...anos) + 1) + '-12-31'
+    };
+}
+
 async function gcListar(caminho, parametros) {
     const registros = [];
 
@@ -4499,9 +4570,10 @@ async function gcConferir(id) {
 
     // Consulta também recebimentos já pagos para evitar duplicidade.
     const recebimentos = await gcListar('/recebimentos', {
-        loja_id: config.GESTAOCLICK_LOJA_ID,
-        cliente_id: venda.cliente_id
-    });
+		loja_id: config.GESTAOCLICK_LOJA_ID,
+		cliente_id: venda.cliente_id,
+		...gcPeriodoRecebimentos(venda)
+	});
 
     const encontrados = recebimentos.filter(recebimento => {
         const referencia = String(recebimento.descricao || '')
@@ -4890,9 +4962,10 @@ async function gcVerificarPagamentoMisto(dados) {
     const { config, venda, pagamento: p, recebimento } = dados;
 
     const registros = await gcListar('/recebimentos', {
-        loja_id: config.GESTAOCLICK_LOJA_ID,
-        cliente_id: venda.cliente_id
-    });
+		loja_id: config.GESTAOCLICK_LOJA_ID,
+		cliente_id: venda.cliente_id,
+		...gcPeriodoRecebimentos(venda)
+	});
 
     const parcelas = registros.filter(r => {
         const referencia = String(r.descricao || '').trim().match(
@@ -9888,8 +9961,9 @@ app.get(
             // Busca pela loja, incluindo recebimentos sem cliente
             // vinculado e recebimentos já liquidados.
             const recebimentos = await gcListar('/recebimentos', {
-                loja_id: config.GESTAOCLICK_LOJA_ID
-            });
+				loja_id: config.GESTAOCLICK_LOJA_ID,
+				...gcPeriodoRecebimentos(venda)
+			});
 
             const vinculadosPorDescricao = recebimentos.filter(r => {
                 const referencia = String(r.descricao || '')
