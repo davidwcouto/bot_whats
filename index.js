@@ -5546,8 +5546,28 @@ app.get(
 						}
 					}
 
+					let motoboyAnterior = motoboy.value.trim();
+
 					horario.addEventListener('change', guardarSelecao);
-					motoboy.addEventListener('input', guardarSelecao);
+
+					motoboy.addEventListener('change', function () {
+						const novoMotoboy = motoboy.value.trim();
+
+						if (
+							motoboyAnterior &&
+							novoMotoboy &&
+							novoMotoboy !== motoboyAnterior
+						) {
+							window.alert(
+								'Lembrete: envie o link da rota para ' +
+								motoboyAnterior +
+								' no WhatsApp antes de continuar.'
+							);
+						}
+
+						motoboyAnterior = novoMotoboy;
+						guardarSelecao();
+					});
 
 					function normalizarRotulo(texto) {
 						return texto
