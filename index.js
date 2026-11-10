@@ -332,6 +332,76 @@ return res.json({
 );
 
 app.get(
+    '/api/atendimento/testar-telefone',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const telefone = String(req.query.telefone || '')
+                .replace(/\D/g, '');
+
+            if (!/^(?:55)?\d{10,11}$/.test(telefone)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone inválido'
+                });
+            }
+
+            const numero = telefone.startsWith('55')
+                ? telefone
+                : `55${telefone}`;
+
+            const resultado = await client.pupPage.evaluate(
+                async (numeroProcurado) => {
+                    const chats = window.require('WAWebCollections')
+                        .Chat.getModelsArray();
+
+                    const encontrados = [];
+
+                    for (const chat of chats) {
+                        const chatId = chat.id?._serialized;
+
+                        if (!chatId || chatId.endsWith('@g.us')) {
+                            continue;
+                        }
+
+                        if (chatId === `${numeroProcurado}@c.us`) {
+                            encontrados.push(chatId);
+                        }
+                    }
+
+                    return {
+                        totalChats: chats.length,
+                        encontrados
+                    };
+                },
+                numero
+            );
+
+            return res.json({
+                sucesso: true,
+                telefone: numero,
+                ...resultado
+            });
+
+        } catch (erro) {
+            console.error('Erro ao testar telefone:', erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao identificar cliente'
+            });
+        }
+    }
+);
+
+app.get(
     '/api/atendimento/testar-mensagem',
     autenticarControleAtendimento,
     async (req, res) => {
