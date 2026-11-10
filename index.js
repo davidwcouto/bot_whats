@@ -110,6 +110,68 @@ function autenticarControleAtendimento(req, res, next) {
     next();
 }
 
+const fs = require("fs");
+const cryptoEntregas = require('crypto');
+
+async function gerarTokensAtendentes() {
+    const crypto = require('crypto');
+
+    const atendentes = [
+        'sapucaia-pc01',
+        'sapucaia-pc02',
+        'sapucaia-pc03',
+        'sapucaia-pc04',
+        'sapucaia-pc05'
+    ];
+
+    for (const computadorId of atendentes) {
+        const token = crypto.randomBytes(32).toString('hex');
+
+        const hash = crypto
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        await db.execute(`
+            UPDATE atendentes_whatsapp
+            SET token_hash = ?
+            WHERE computador_id = ?
+              AND loja = 'sapucaia'
+        `, [hash, computadorId]);
+
+        console.log(
+            `TOKEN ${computadorId}: ${token}`
+        );
+    }
+
+    console.log('Tokens dos atendentes gerados.');
+}
+
+if (process.env.GERAR_TOKENS_ATENDENTES === '1') {
+    gerarTokensAtendentes().catch(console.error);
+}
+
+const axios = require("axios");
+const OpenAI = require("openai");
+const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
+const cloudinary = require("cloudinary").v2;
+const path = require("path");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const express = require('express');
+const qrcode = require("qrcode-terminal");
+const app = express();
+const PORT = process.env.PORT || 3000;
+const inicioBot = Math.floor(Date.now() / 1000);	
+const { DateTime } = require("luxon");
+const Tesseract = require("tesseract.js");
+const multer = require("multer");
+const storage = multer.diskStorage({
+    destination: "uploads/",
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+
 app.post(
     '/api/atendimento/assumir',
     express.json(),
@@ -245,68 +307,6 @@ app.get(
         }
     }
 );
-
-const fs = require("fs");
-const cryptoEntregas = require('crypto');
-
-async function gerarTokensAtendentes() {
-    const crypto = require('crypto');
-
-    const atendentes = [
-        'sapucaia-pc01',
-        'sapucaia-pc02',
-        'sapucaia-pc03',
-        'sapucaia-pc04',
-        'sapucaia-pc05'
-    ];
-
-    for (const computadorId of atendentes) {
-        const token = crypto.randomBytes(32).toString('hex');
-
-        const hash = crypto
-            .createHash('sha256')
-            .update(token)
-            .digest('hex');
-
-        await db.execute(`
-            UPDATE atendentes_whatsapp
-            SET token_hash = ?
-            WHERE computador_id = ?
-              AND loja = 'sapucaia'
-        `, [hash, computadorId]);
-
-        console.log(
-            `TOKEN ${computadorId}: ${token}`
-        );
-    }
-
-    console.log('Tokens dos atendentes gerados.');
-}
-
-if (process.env.GERAR_TOKENS_ATENDENTES === '1') {
-    gerarTokensAtendentes().catch(console.error);
-}
-
-const axios = require("axios");
-const OpenAI = require("openai");
-const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
-const cloudinary = require("cloudinary").v2;
-const path = require("path");
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const express = require('express');
-const qrcode = require("qrcode-terminal");
-const app = express();
-const PORT = process.env.PORT || 3000;
-const inicioBot = Math.floor(Date.now() / 1000);	
-const { DateTime } = require("luxon");
-const Tesseract = require("tesseract.js");
-const multer = require("multer");
-const storage = multer.diskStorage({
-    destination: "uploads/",
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
-    }
-});
 
 const upload = multer({ storage });
 
