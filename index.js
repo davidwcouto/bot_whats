@@ -384,11 +384,54 @@ app.get(
                 numero
             );
 
-            return res.json({
-                sucesso: true,
-                telefone: numero,
-                ...resultado
-            });
+const encontrados = [...resultado.encontrados];
+
+if (encontrados.length === 0) {
+    const idsLid = await client.pupPage.evaluate(() => {
+        return window.require('WAWebCollections')
+            .Chat.getModelsArray()
+            .map(chat => chat.id?._serialized)
+            .filter(id => id && id.endsWith('@lid'));
+    });
+
+    console.log('Quantidade de conversas @lid:', idsLid.length);
+
+    for (let i = 0; i < idsLid.length; i += 50) {
+        const lote = idsLid.slice(i, i + 50);
+
+        const contatos = await client.getContactLidAndPhone(lote);
+
+        console.log('DIAGNÓSTICO LID:', JSON.stringify({
+            quantidade: contatos?.length || 0,
+            exemplo: contatos?.[0] || null
+        }, null, 2));
+
+        for (const contato of contatos || []) {
+            const telefoneContato = String(contato.pn || '')
+                .replace(/\D/g, '');
+
+            if (telefoneContato === numero) {
+                const lid = contato.lid;
+                const chatId = typeof lid === 'string'
+                    ? lid
+                    : lid?._serialized;
+
+                if (chatId && idsLid.includes(chatId)) {
+                    encontrados.push(chatId);
+                }
+            }
+        }
+
+        if (encontrados.length > 0) break;
+    }
+}
+
+return res.json({
+    sucesso: true,
+    telefone: numero,
+    totalChats: resultado.totalChats,
+    encontrados
+});
 
         } catch (erro) {
             console.error('Erro ao testar telefone:', erro);
