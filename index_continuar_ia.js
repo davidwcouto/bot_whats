@@ -147,10 +147,6 @@ async function gerarTokensAtendentes() {
     console.log('Tokens dos atendentes gerados.');
 }
 
-if (process.env.GERAR_TOKENS_ATENDENTES === '1') {
-    gerarTokensAtendentes().catch(console.error);
-}
-
 const axios = require("axios");
 const OpenAI = require("openai");
 const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
