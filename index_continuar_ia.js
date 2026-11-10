@@ -256,6 +256,45 @@ app.post(
     }
 );
 
+app.get('/api/atendimento/testar-chats',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const chats = await client.getChats();
+
+            const resumo = chats.slice(0, 5).map(chat => ({
+                tipoId: chat.id?.server || null,
+                possuiId: !!chat.id?._serialized,
+                possuiContato: !!chat.contact
+            }));
+
+            return res.json({
+                sucesso: true,
+                quantidade: chats.length,
+                exemplos: resumo
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao consultar chats:',
+                erro.message
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao consultar conversas'
+            });
+        }
+    }
+);
+
 /**
  * Consulta o responsável por uma conversa.
  * Coutech Cell - Sapucaia
