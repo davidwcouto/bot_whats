@@ -267,53 +267,29 @@ app.get('/api/atendimento/testar-chats',
                 });
             }
 
-            
-
-			const diagnostico = await client.pupPage.evaluate(() => ({
-				storeGlobal: !!window.Store,
-				storeNoWWebJS: !!window.WWebJS?.Store,
-				wwebjsDisponivel: !!window.WWebJS,
-				getChatDisponivel:
-					typeof window.WWebJS?.getChat === 'function',
-				getChatsDisponivel:
-					typeof window.WWebJS?.getChats === 'function',
-				versaoWhatsApp:
-					window.Debug?.VERSION || 'Não identificada'
-			}));
-
-			console.log('Diagnóstico interno WhatsApp:', diagnostico);
-
-
-			console.log('Diagnóstico interno WhatsApp:', diagnostico);
-			
-const diagnosticoChats = await client.pupPage.evaluate(async () => {
+            const idsChats = await client.pupPage.evaluate(() => {
     const chats = window.require('WAWebCollections')
         .Chat.getModelsArray();
 
-    const erros = [];
-    let convertidos = 0;
-
-    for (let i = 0; i < chats.length; i++) {
-        try {
-            await window.WWebJS.getChatModel(chats[i]);
-            convertidos++;
-        } catch (erro) {
-            erros.push({
-                indice: i,
-                id: chats[i]?.id?._serialized || null,
-                erro: String(erro?.message || erro),
-                stack: String(erro?.stack || '').slice(0, 500)
-            });
-        }
-    }
-
-    return {
-        total: chats.length,
-        convertidos,
-        quantidadeErros: erros.length,
-        erros: erros.slice(0, 10)
-    };
+    return chats
+        .map(chat => chat.id?._serialized)
+        .filter(Boolean);
 });
+
+console.log('TESTE IDS DIRETOS:', {
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+
+return res.json({
+    sucesso: true,
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+			console.log('Diagnóstico interno WhatsApp:', diagnostico);
+
+
+			console.log('Diagnóstico interno WhatsApp:', diagnostico);
 
 console.log(
     'DIAGNÓSTICO CONVERSÃO DE CHATS:',
