@@ -256,7 +256,12 @@ app.post(
     }
 );
 
-app.get('/api/atendimento/testar-chats',
+/**
+ * Consulta o responsável por uma conversa.
+ * Coutech Cell - Sapucaia
+ */
+ 
+ app.get('/api/atendimento/testar-chats',
     autenticarControleAtendimento,
     async (req, res) => {
         try {
@@ -294,11 +299,7 @@ app.get('/api/atendimento/testar-chats',
         }
     }
 );
-
-/**
- * Consulta o responsável por uma conversa.
- * Coutech Cell - Sapucaia
- */
+ 
 app.get(
     '/api/atendimento/responsavel',
     autenticarControleAtendimento,
