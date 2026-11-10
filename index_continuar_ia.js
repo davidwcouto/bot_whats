@@ -209,28 +209,20 @@ app.post(
     autenticarControleAtendimento,
     async (req, res) => {
         try {
-            const { computadorId, chatId } = req.body;
+			const { chatId } = req.body || {};
 
-            if (
-                typeof computadorId !== 'string' ||
-                typeof chatId !== 'string' ||
-                !/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)
-            ) {
-                return res.status(400).json({
-                    sucesso: false,
-                    erro: 'Dados inválidos'
-                });
-            }
+			if (
+				typeof chatId !== 'string' ||
+				!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)
+			) {
+				return res.status(400).json({
+					sucesso: false,
+					erro: 'Identificador da conversa inválido'
+				});
+			}
 
-            const atendente =
-                await buscarAtendentePorComputador(computadorId);
-
-            if (!atendente) {
-                return res.status(404).json({
-                    sucesso: false,
-                    erro: 'Atendente não encontrado'
-                });
-            }
+			// Funcionário identificado pelo token individual.
+			const atendente = req.atendente;
 
             await db.execute(`
                 INSERT INTO conversas_atendimento
