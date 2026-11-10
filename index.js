@@ -333,14 +333,11 @@ console.log('TESTE IDS DIRETOS:', {
     quantidade: idsChats.length,
     exemplos: idsChats.slice(0, 5)
 });
-			const chats = await client.getChats();
-
-
-            const resumo = chats.slice(0, 5).map(chat => ({
-                tipoId: chat.id?.server || null,
-                possuiId: !!chat.id?._serialized,
-                possuiContato: !!chat.contact
-            }));
+return res.json({
+    sucesso: true,
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
 
             return res.json({
                 sucesso: true,
