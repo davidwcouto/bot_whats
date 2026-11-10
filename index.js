@@ -354,8 +354,13 @@ try {
 }
 
 // Criando o cliente do WhatsApp Web
+
 const client = new Client({
     authStrategy: new LocalAuth(),
+
+    webVersionCache: {
+        type: 'none'
+    },
 
     puppeteer: {
         headless: true,
