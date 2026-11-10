@@ -285,6 +285,28 @@ app.get('/api/atendimento/testar-chats',
 
 
 			console.log('Diagnóstico interno WhatsApp:', diagnostico);
+			
+			const diagnosticoChats = await client.pupPage.evaluate(() => {
+    try {
+        const chats = window.require('WAWebCollections').Chat.getModelsArray();
+
+        return {
+            sucesso: true,
+            quantidade: chats.length,
+            exemplos: chats.slice(0, 5).map(chat => ({
+                id: chat.id?._serialized || null
+            }))
+        };
+    } catch (erro) {
+        return {
+            sucesso: false,
+            erro: String(erro),
+            stack: erro?.stack
+        };
+    }
+});
+
+console.log('DIAGNÓSTICO COLEÇÃO DE CHATS:', diagnosticoChats);
 
 			const chats = await client.getChats();
 
