@@ -286,27 +286,39 @@ app.get('/api/atendimento/testar-chats',
 
 			console.log('Diagnóstico interno WhatsApp:', diagnostico);
 			
-			const diagnosticoChats = await client.pupPage.evaluate(() => {
-    try {
-        const chats = window.require('WAWebCollections').Chat.getModelsArray();
+const diagnosticoChats = await client.pupPage.evaluate(async () => {
+    const chats = window.require('WAWebCollections')
+        .Chat.getModelsArray();
 
-        return {
-            sucesso: true,
-            quantidade: chats.length,
-            exemplos: chats.slice(0, 5).map(chat => ({
-                id: chat.id?._serialized || null
-            }))
-        };
-    } catch (erro) {
-        return {
-            sucesso: false,
-            erro: String(erro),
-            stack: erro?.stack
-        };
+    const erros = [];
+    let convertidos = 0;
+
+    for (let i = 0; i < chats.length; i++) {
+        try {
+            await window.WWebJS.getChatModel(chats[i]);
+            convertidos++;
+        } catch (erro) {
+            erros.push({
+                indice: i,
+                id: chats[i]?.id?._serialized || null,
+                erro: String(erro?.message || erro),
+                stack: String(erro?.stack || '').slice(0, 500)
+            });
+        }
     }
+
+    return {
+        total: chats.length,
+        convertidos,
+        quantidadeErros: erros.length,
+        erros: erros.slice(0, 10)
+    };
 });
 
-console.log('DIAGNÓSTICO COLEÇÃO DE CHATS:', diagnosticoChats);
+console.log(
+    'DIAGNÓSTICO CONVERSÃO DE CHATS:',
+    JSON.stringify(diagnosticoChats, null, 2)
+);
 
 			const chats = await client.getChats();
 
