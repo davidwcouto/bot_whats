@@ -34,8 +34,259 @@ const db = mysql.createPool({
     connectionLimit: 10
 });
 
+/**
+ * Identifica o atendente pelo computador cadastrado.
+ * Utilizada futuramente pela extensão do Chrome.
+ */
+async function buscarAtendentePorComputador(computadorId) {
+    const [atendentes] = await db.execute(`
+        SELECT id, nome, computador_id
+        FROM atendentes_whatsapp
+        WHERE computador_id = ?
+          AND loja = 'sapucaia'
+          AND ativo = 1
+        LIMIT 1
+    `, [computadorId]);
+
+    return atendentes.length > 0
+        ? atendentes[0]
+        : null;
+}
+
+/**
+ * Controle de responsáveis pelas conversas
+ * Coutech Cell - Sapucaia
+ */
+
+const TEMPO_ATENDIMENTO_MINUTOS = 5;
+
+/**
+ * Libera conversas após 5 minutos sem atividade.
+ * Não interfere na pausa da IA.
+ */
+async function liberarConversasInativas() {
+    try {
+        const [resultado] = await db.execute(`
+            UPDATE conversas_atendimento
+            SET atendente_id = NULL
+            WHERE loja = 'sapucaia'
+              AND atendente_id IS NOT NULL
+              AND ultima_atividade <
+                  DATE_SUB(
+                      NOW(3),
+                      INTERVAL 5 MINUTE
+                  )
+        `);
+
+        if (resultado.affectedRows > 0) {
+            console.log(
+                `Atendimentos liberados: ${resultado.affectedRows}`
+            );
+        }
+    } catch (erro) {
+        console.error(
+            'Erro ao liberar atendimentos:',
+            erro.message
+        );
+    }
+}
+
+// Verifica conversas inativas a cada 15 segundos.
+setInterval(liberarConversasInativas, 15000);
+
+// Autenticação provisória da API.
+// O token deve ser configurado no Railway.
+function autenticarControleAtendimento(req, res, next) {
+    const token = req.get('x-atendimento-token');
+    const esperado = process.env.TOKEN_CONTROLE_ATENDIMENTO;
+
+    if (!esperado || token !== esperado) {
+        return res.status(401).json({
+            sucesso: false,
+            erro: 'Não autorizado'
+        });
+    }
+
+    next();
+}
+
+app.post(
+    '/api/atendimento/assumir',
+    express.json(),
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const { computadorId, chatId } = req.body;
+
+            if (
+                typeof computadorId !== 'string' ||
+                typeof chatId !== 'string' ||
+                !/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Dados inválidos'
+                });
+            }
+
+            const atendente =
+                await buscarAtendentePorComputador(computadorId);
+
+            if (!atendente) {
+                return res.status(404).json({
+                    sucesso: false,
+                    erro: 'Atendente não encontrado'
+                });
+            }
+
+            await db.execute(`
+                INSERT INTO conversas_atendimento
+                    (loja, chat_id, atendente_id, ultima_atividade)
+                VALUES
+                    ('sapucaia', ?, ?, NOW(3))
+                ON DUPLICATE KEY UPDATE
+                    atendente_id = VALUES(atendente_id),
+                    ultima_atividade = NOW(3)
+            `, [chatId, atendente.id]);
+
+            return res.json({
+                sucesso: true,
+                atendente: atendente.nome,
+                chatId,
+                tempoInatividadeMinutos:
+                    TEMPO_ATENDIMENTO_MINUTOS
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao assumir atendimento:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+/**
+ * Consulta o responsável por uma conversa.
+ * Coutech Cell - Sapucaia
+ */
+app.get(
+    '/api/atendimento/responsavel',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.query.chatId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            const [conversas] = await db.execute(`
+                SELECT
+                    c.chat_id,
+                    a.nome AS atendente,
+                    c.ultima_atividade,
+                    CASE
+                        WHEN c.atendente_id IS NOT NULL
+                         AND c.ultima_atividade >=
+                             DATE_SUB(NOW(3), INTERVAL 5 MINUTE)
+                        THEN 'ocupado'
+                        ELSE 'disponivel'
+                    END AS status
+                FROM conversas_atendimento c
+                LEFT JOIN atendentes_whatsapp a
+                    ON a.id = c.atendente_id
+                WHERE c.loja = 'sapucaia'
+                  AND c.chat_id = ?
+                LIMIT 1
+            `, [chatId]);
+
+            if (conversas.length === 0) {
+                return res.json({
+                    sucesso: true,
+                    chatId,
+                    status: 'disponivel',
+                    atendente: null
+                });
+            }
+
+            const conversa = conversas[0];
+            const ocupado =
+                conversa.status === 'ocupado' &&
+                Boolean(conversa.atendente);
+
+            return res.json({
+                sucesso: true,
+                chatId,
+                status: ocupado ? 'ocupado' : 'disponivel',
+                atendente: ocupado
+                    ? conversa.atendente
+                    : null
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao consultar responsável:',
+                erro.message
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
 const fs = require("fs");
 const cryptoEntregas = require('crypto');
+
+async function gerarTokensAtendentes() {
+    const crypto = require('crypto');
+
+    const atendentes = [
+        'sapucaia-pc01',
+        'sapucaia-pc02',
+        'sapucaia-pc03',
+        'sapucaia-pc04',
+        'sapucaia-pc05'
+    ];
+
+    for (const computadorId of atendentes) {
+        const token = crypto.randomBytes(32).toString('hex');
+
+        const hash = crypto
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        await db.execute(`
+            UPDATE atendentes_whatsapp
+            SET token_hash = ?
+            WHERE computador_id = ?
+              AND loja = 'sapucaia'
+        `, [hash, computadorId]);
+
+        console.log(
+            `TOKEN ${computadorId}: ${token}`
+        );
+    }
+
+    console.log('Tokens dos atendentes gerados.');
+}
+
+if (process.env.GERAR_TOKENS_ATENDENTES === '1') {
+    gerarTokensAtendentes().catch(console.error);
+}
+
 const axios = require("axios");
 const OpenAI = require("openai");
 const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
@@ -1366,6 +1617,33 @@ client.on("message", async (message) => {
 	}
 	
 	const chatId = message.from;
+        // ==========================================
+        // CONTROLE DE ATENDIMENTO - SAPUCAIA
+        // Atualizar atividade quando cliente escreve
+        // ==========================================
+        try {
+            await db.execute(`
+                INSERT INTO conversas_atendimento
+                    (loja, chat_id, ultima_atividade)
+                VALUES
+                    ('sapucaia', ?, NOW(3))
+                
+				ON DUPLICATE KEY UPDATE
+					atendente_id = IF(
+						ultima_atividade < DATE_SUB(NOW(3), INTERVAL 5 MINUTE),
+						NULL,
+						atendente_id
+					),
+					ultima_atividade = NOW(3)
+
+            `, [chatId]);
+        } catch (erroAtendimento) {
+            console.error(
+                'Erro ao atualizar atividade da conversa:',
+                erroAtendimento.message
+            );
+        }
+	
 	const msg = message.body.toLowerCase().trim();
 	
 	if (!msg && !message.hasMedia) {
