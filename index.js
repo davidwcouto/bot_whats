@@ -268,13 +268,21 @@ app.get('/api/atendimento/testar-chats',
             }
 
             
+
 			const diagnostico = await client.pupPage.evaluate(() => ({
-				storeDisponivel: !!window.Store,
-				chatDisponivel: !!window.Store?.Chat,
-				getModelsDisponivel:
-					typeof window.Store?.Chat?.getModels === 'function',
-				wwebjsDisponivel: !!window.WWebJS
+				storeGlobal: !!window.Store,
+				storeNoWWebJS: !!window.WWebJS?.Store,
+				wwebjsDisponivel: !!window.WWebJS,
+				getChatDisponivel:
+					typeof window.WWebJS?.getChat === 'function',
+				getChatsDisponivel:
+					typeof window.WWebJS?.getChats === 'function',
+				versaoWhatsApp:
+					window.Debug?.VERSION || 'Não identificada'
 			}));
+
+			console.log('Diagnóstico interno WhatsApp:', diagnostico);
+
 
 			console.log('Diagnóstico interno WhatsApp:', diagnostico);
 
