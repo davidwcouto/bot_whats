@@ -287,10 +287,15 @@ app.post(
             });
 
         } catch (erro) {
-            console.error(
-                'Erro ao consultar chats:',
-                erro.message
-            );
+			console.error(
+				'Erro ao consultar chats:',
+				erro
+			);
+
+			console.error(
+				'Stack do erro:',
+				erro?.stack
+			);
 
             return res.status(500).json({
                 sucesso: false,
