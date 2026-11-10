@@ -320,6 +320,19 @@ console.log(
     JSON.stringify(diagnosticoChats, null, 2)
 );
 
+const idsChats = await client.pupPage.evaluate(() => {
+    const chats = window.require('WAWebCollections')
+        .Chat.getModelsArray();
+
+    return chats
+        .map(chat => chat.id?._serialized)
+        .filter(Boolean);
+});
+
+console.log('TESTE IDS DIRETOS:', {
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
 			const chats = await client.getChats();
 
 
