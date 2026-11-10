@@ -96,18 +96,53 @@ setInterval(liberarConversasInativas, 15000);
 
 // Autenticação provisória da API.
 // O token deve ser configurado no Railway.
-function autenticarControleAtendimento(req, res, next) {
-    const token = req.get('x-atendimento-token');
-    const esperado = process.env.TOKEN_CONTROLE_ATENDIMENTO;
+async function autenticarControleAtendimento(req, res, next) {
+    try {
+        const token = req.get('x-atendimento-token');
 
-    if (!esperado || token !== esperado) {
-        return res.status(401).json({
+        if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+            return res.status(401).json({
+                sucesso: false,
+                erro: 'Token inválido ou não informado'
+            });
+        }
+
+        const tokenHash = cryptoEntregas
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        const [atendentes] = await db.execute(`
+            SELECT id, nome, computador_id
+            FROM atendentes_whatsapp
+            WHERE token_hash = ?
+              AND loja = 'sapucaia'
+              AND ativo = 1
+            LIMIT 1
+        `, [tokenHash]);
+
+        if (atendentes.length === 0) {
+            return res.status(401).json({
+                sucesso: false,
+                erro: 'Atendente não autorizado'
+            });
+        }
+
+        req.atendente = atendentes[0];
+
+        next();
+
+    } catch (erro) {
+        console.error(
+            'Erro na autenticação do atendimento:',
+            erro.message
+        );
+
+        return res.status(500).json({
             sucesso: false,
-            erro: 'Não autorizado'
+            erro: 'Erro interno na autenticação'
         });
     }
-
-    next();
 }
 
 const fs = require("fs");
