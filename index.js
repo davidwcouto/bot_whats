@@ -409,6 +409,14 @@ if (encontrados.length === 0) {
         for (const contato of contatos || []) {
             const telefoneContato = String(contato.pn || '')
                 .replace(/\D/g, '');
+				
+if (telefoneContato === numero) {
+    console.log('CLIENTE LOCALIZADO PELO LID:', {
+        telefone: telefoneContato,
+        lid: contato.lid,
+        pn: contato.pn
+    });
+}
 
             if (telefoneContato === numero) {
                 const lid = contato.lid;
