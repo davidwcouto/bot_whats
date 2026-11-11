@@ -332,6 +332,56 @@ return res.json({
 );
 
 app.get(
+    '/api/atendimento/testar-contato-direto',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const telefone = String(req.query.telefone || '')
+                .replace(/\D/g, '');
+
+            if (!/^(?:55)?\d{10,11}$/.test(telefone)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone inválido'
+                });
+            }
+
+            const numero = telefone.startsWith('55')
+                ? telefone
+                : `55${telefone}`;
+
+            const contato = await client.getContactById(
+                `${numero}@c.us`
+            );
+
+            return res.json({
+                sucesso: true,
+                contato: {
+                    id: contato?.id?._serialized || null,
+                    number: contato?.number || null,
+                    isMyContact: contato?.isMyContact || false
+                }
+            });
+
+        } catch (erro) {
+            console.error('Erro no teste direto:', erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.get(
     '/api/atendimento/testar-telefone',
     autenticarControleAtendimento,
     async (req, res) => {
