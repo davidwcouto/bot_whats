@@ -614,6 +614,122 @@ app.get(
     }
 );
 
+
+/**
+ * Registra qual funcionário enviou uma mensagem.
+ * Coutech Cell - Sapucaia
+ */
+app.post(
+    '/api/atendimento/mensagem/registrar',
+    express.json(),
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.body?.chatId || '');
+            const mensagemId = String(req.body?.mensagemId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            if (
+                !mensagemId ||
+                mensagemId.length > 255
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da mensagem inválido'
+                });
+            }
+
+            const atendente = req.atendente;
+
+            const [resultado] = await db.execute(`
+                INSERT IGNORE INTO mensagens_atendentes
+                    (mensagem_id, chat_id, atendente_id)
+                VALUES (?, ?, ?)
+            `, [
+                mensagemId,
+                chatId,
+                atendente.id
+            ]);
+
+            return res.json({
+                sucesso: true,
+                registrada: resultado.affectedRows === 1,
+                atendente: atendente.nome,
+                mensagemId
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao registrar autor da mensagem:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+
+/**
+ * Consulta os autores das mensagens de uma conversa.
+ * Coutech Cell - Sapucaia
+ */
+app.get(
+    '/api/atendimento/mensagens',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.query.chatId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            const [mensagens] = await db.execute(`
+                SELECT
+                    m.mensagem_id AS mensagemId,
+                    a.nome AS atendente
+                FROM mensagens_atendentes m
+                INNER JOIN atendentes_whatsapp a
+                    ON a.id = m.atendente_id
+                WHERE m.chat_id = ?
+                ORDER BY m.id DESC
+                LIMIT 500
+            `, [chatId]);
+
+            return res.json({
+                sucesso: true,
+                chatId,
+                mensagens
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao consultar autores das mensagens:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+
 /**
  * Consulta o responsável por uma conversa.
  * Coutech Cell - Sapucaia
