@@ -357,6 +357,9 @@ app.get(
                 ? telefone
                 : `55${telefone}`;
 
+const contato = await client.getContactById(
+    `${numero}@c.us`
+);
 
 const conversasEncontradas = await client.pupPage.evaluate(
     (numeroProcurado, nomeContato, pushnameContato) => {
