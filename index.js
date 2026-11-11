@@ -408,7 +408,9 @@ return res.json({
         number: contato?.number || null,
         isMyContact: contato?.isMyContact || false
     },
-    conversasEncontradas
+    conversasEncontradas,
+    chatDireto,
+    erroChatDireto
 });
 			conversasEncontradas
 
