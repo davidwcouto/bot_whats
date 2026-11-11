@@ -357,9 +357,22 @@ app.get(
                 ? telefone
                 : `55${telefone}`;
 
-            const contato = await client.getContactById(
-                `${numero}@c.us`
-            );
+const chats = await client.getChats();
+
+const conversasEncontradas = chats
+    .filter(chat => {
+        const id = chat.id?._serialized || '';
+
+        return (
+            id === `${numero}@c.us` ||
+            chat.name === contato?.name ||
+            chat.name === contato?.pushname
+        );
+    })
+    .map(chat => ({
+        id: chat.id?._serialized,
+        nome: chat.name
+    }));
 
             return res.json({
                 sucesso: true,
@@ -369,6 +382,7 @@ app.get(
                     isMyContact: contato?.isMyContact || false
                 }
             });
+			conversasEncontradas
 
         } catch (erro) {
             console.error('Erro no teste direto:', erro);
