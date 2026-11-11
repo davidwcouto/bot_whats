@@ -387,14 +387,15 @@ const conversasEncontradas = await client.pupPage.evaluate(
 );
 
 
-            return res.json({
-                sucesso: true,
-                contato: {
-                    id: contato?.id?._serialized || null,
-                    number: contato?.number || null,
-                    isMyContact: contato?.isMyContact || false
-                }
-            });
+return res.json({
+    sucesso: true,
+    contato: {
+        id: contato?.id?._serialized || null,
+        number: contato?.number || null,
+        isMyContact: contato?.isMyContact || false
+    },
+    conversasEncontradas
+});
 			conversasEncontradas
 
 } catch (erro) {
