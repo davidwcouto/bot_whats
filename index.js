@@ -361,6 +361,20 @@ const contato = await client.getContactById(
     `${numero}@c.us`
 );
 
+let chatDireto = null;
+let erroChatDireto = null;
+
+try {
+    const chat = await client.getChatById(`${numero}@c.us`);
+
+    chatDireto = {
+        id: chat?.id?._serialized || null,
+        nome: chat?.name || null
+    };
+} catch (erro) {
+    erroChatDireto = erro.message;
+}
+
 const conversasEncontradas = await client.pupPage.evaluate(
     (numeroProcurado, nomeContato, pushnameContato) => {
         const chats = window.require('WAWebCollections')
