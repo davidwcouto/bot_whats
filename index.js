@@ -357,22 +357,32 @@ app.get(
                 ? telefone
                 : `55${telefone}`;
 
-const chats = await client.getChats();
 
-const conversasEncontradas = chats
-    .filter(chat => {
-        const id = chat.id?._serialized || '';
+const conversasEncontradas = await client.pupPage.evaluate(
+    (numeroProcurado, nomeContato, pushnameContato) => {
+        const chats = window.require('WAWebCollections')
+            .Chat.getModelsArray();
 
-        return (
-            id === `${numero}@c.us` ||
-            chat.name === contato?.name ||
-            chat.name === contato?.pushname
-        );
-    })
-    .map(chat => ({
-        id: chat.id?._serialized,
-        nome: chat.name
-    }));
+        return chats
+            .filter(chat => {
+                const id = chat.id?._serialized || '';
+
+                return (
+                    id === `${numeroProcurado}@c.us` ||
+                    (nomeContato && chat.name === nomeContato) ||
+                    (pushnameContato && chat.name === pushnameContato)
+                );
+            })
+            .map(chat => ({
+                id: chat.id?._serialized,
+                nome: chat.name || null
+            }));
+    },
+    numero,
+    contato?.name || null,
+    contato?.pushname || null
+);
+
 
             return res.json({
                 sucesso: true,
