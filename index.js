@@ -384,8 +384,12 @@ const conversasEncontradas = chats
             });
 			conversasEncontradas
 
-        } catch (erro) {
-            console.error('Erro no teste direto:', erro);
+} catch (erro) {
+    console.error('ERRO COMPLETO NO TESTE DIRETO:', {
+        mensagem: erro?.message,
+        stack: erro?.stack,
+        nome: erro?.name
+    });
 
             return res.status(500).json({
                 sucesso: false,
