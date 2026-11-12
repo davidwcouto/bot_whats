@@ -429,6 +429,104 @@ return res.json({
     }
 );
 
+
+app.get(
+    '/api/atendimento/testar-mensagem',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info || !client.pupPage) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const mensagemId = String(
+                req.query.mensagemId || ''
+            ).trim();
+
+            if (!/^[a-zA-Z0-9_-]{10,150}$/.test(mensagemId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'ID de mensagem inválido'
+                });
+            }
+
+            const resultado = await client.pupPage.evaluate(
+                (idProcurado) => {
+                    const colecoes = window.require(
+                        'WAWebCollections'
+                    );
+
+                    const mensagens =
+                        colecoes.Msg.getModelsArray();
+
+                    const encontrados = [];
+
+                    for (const mensagem of mensagens) {
+                        const id = mensagem.id;
+
+                        const idInterno =
+                            id?.id || '';
+
+                        const idCompleto =
+                            id?._serialized || '';
+
+                        if (
+                            idInterno !== idProcurado &&
+                            idCompleto !== idProcurado
+                        ) {
+                            continue;
+                        }
+
+                        const chatId =
+                            id?.remote?._serialized ||
+                            mensagem.chatId?._serialized ||
+                            null;
+
+                        if (chatId) {
+                            encontrados.push(chatId);
+                        }
+                    }
+
+                    return {
+                        quantidadeMensagens: mensagens.length,
+                        encontrados: [...new Set(encontrados)]
+                    };
+                },
+                mensagemId
+            );
+
+            const chatId =
+                resultado.encontrados.length === 1
+                    ? resultado.encontrados[0]
+                    : null;
+
+            return res.json({
+                sucesso: true,
+                identificado: Boolean(chatId),
+                chatId,
+                quantidadeMensagens:
+                    resultado.quantidadeMensagens,
+                quantidadeCorrespondencias:
+                    resultado.encontrados.length
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro no teste de identificação por mensagem:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao consultar mensagem'
+            });
+        }
+    }
+);
+
 app.get(
     '/api/atendimento/testar-telefone',
     autenticarControleAtendimento,

@@ -1,0 +1,10531 @@
+const mysql = require('mysql2/promise');
+require('dotenv').config();
+
+process.on("unhandledRejection", err => {
+    const mensagem = String(err?.message || err);
+
+    if (
+        mensagem.includes("Execution context was destroyed") ||
+        mensagem.includes("Runtime.callFunctionOn")
+    ) {
+        console.warn(
+            "⚠ O contexto do WhatsApp Web foi recarregado durante uma operação."
+        );
+        return;
+    }
+
+    console.error(
+        "UNHANDLED REJECTION:",
+        err?.stack || err
+    );
+});
+
+process.on('uncaughtException', err => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+const db = mysql.createPool({
+    host: process.env.MYSQLHOST,
+    user: process.env.MYSQLUSER,
+    password: process.env.MYSQLPASSWORD,
+    database: process.env.MYSQLDATABASE,
+    port: process.env.MYSQLPORT,
+    waitForConnections: true,
+    connectionLimit: 10
+});
+
+/**
+ * Identifica o atendente pelo computador cadastrado.
+ * Utilizada futuramente pela extensão do Chrome.
+ */
+async function buscarAtendentePorComputador(computadorId) {
+    const [atendentes] = await db.execute(`
+        SELECT id, nome, computador_id
+        FROM atendentes_whatsapp
+        WHERE computador_id = ?
+          AND loja = 'sapucaia'
+          AND ativo = 1
+        LIMIT 1
+    `, [computadorId]);
+
+    return atendentes.length > 0
+        ? atendentes[0]
+        : null;
+}
+
+/**
+ * Controle de responsáveis pelas conversas
+ * Coutech Cell - Sapucaia
+ */
+
+const TEMPO_ATENDIMENTO_MINUTOS = 5;
+
+/**
+ * Libera conversas após 5 minutos sem atividade.
+ * Não interfere na pausa da IA.
+ */
+async function liberarConversasInativas() {
+    try {
+        const [resultado] = await db.execute(`
+            UPDATE conversas_atendimento
+            SET atendente_id = NULL
+            WHERE loja = 'sapucaia'
+              AND atendente_id IS NOT NULL
+              AND ultima_atividade <
+                  DATE_SUB(
+                      NOW(3),
+                      INTERVAL 5 MINUTE
+                  )
+        `);
+
+        if (resultado.affectedRows > 0) {
+            console.log(
+                `Atendimentos liberados: ${resultado.affectedRows}`
+            );
+        }
+    } catch (erro) {
+        console.error(
+            'Erro ao liberar atendimentos:',
+            erro.message
+        );
+    }
+}
+
+// Verifica conversas inativas a cada 15 segundos.
+setInterval(liberarConversasInativas, 15000);
+
+// Autenticação provisória da API.
+// O token deve ser configurado no Railway.
+async function autenticarControleAtendimento(req, res, next) {
+    try {
+        const token = req.get('x-atendimento-token');
+
+        if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+            return res.status(401).json({
+                sucesso: false,
+                erro: 'Token inválido ou não informado'
+            });
+        }
+
+        const tokenHash = cryptoEntregas
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        const [atendentes] = await db.execute(`
+            SELECT id, nome, computador_id
+            FROM atendentes_whatsapp
+            WHERE token_hash = ?
+              AND loja = 'sapucaia'
+              AND ativo = 1
+            LIMIT 1
+        `, [tokenHash]);
+
+        if (atendentes.length === 0) {
+            return res.status(401).json({
+                sucesso: false,
+                erro: 'Atendente não autorizado'
+            });
+        }
+
+        req.atendente = atendentes[0];
+
+        next();
+
+    } catch (erro) {
+        console.error(
+            'Erro na autenticação do atendimento:',
+            erro.message
+        );
+
+        return res.status(500).json({
+            sucesso: false,
+            erro: 'Erro interno na autenticação'
+        });
+    }
+}
+
+const fs = require("fs");
+const cryptoEntregas = require('crypto');
+
+async function gerarTokensAtendentes() {
+    const crypto = require('crypto');
+
+    const atendentes = [
+        'sapucaia-pc01',
+        'sapucaia-pc02',
+        'sapucaia-pc03',
+        'sapucaia-pc04',
+        'sapucaia-pc05'
+    ];
+
+    for (const computadorId of atendentes) {
+        const token = crypto.randomBytes(32).toString('hex');
+
+        const hash = crypto
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        await db.execute(`
+            UPDATE atendentes_whatsapp
+            SET token_hash = ?
+            WHERE computador_id = ?
+              AND loja = 'sapucaia'
+        `, [hash, computadorId]);
+
+        console.log(
+            `TOKEN ${computadorId}: ${token}`
+        );
+    }
+
+    console.log('Tokens dos atendentes gerados.');
+}
+
+const axios = require("axios");
+const OpenAI = require("openai");
+const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
+const cloudinary = require("cloudinary").v2;
+const path = require("path");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const express = require('express');
+const qrcode = require("qrcode-terminal");
+const app = express();
+const PORT = process.env.PORT || 3000;
+const inicioBot = Math.floor(Date.now() / 1000);	
+const { DateTime } = require("luxon");
+const Tesseract = require("tesseract.js");
+const multer = require("multer");
+const storage = multer.diskStorage({
+    destination: "uploads/",
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+
+app.post(
+    '/api/atendimento/assumir',
+    express.json(),
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+			const { chatId } = req.body || {};
+
+			if (
+				typeof chatId !== 'string' ||
+				!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)
+			) {
+				return res.status(400).json({
+					sucesso: false,
+					erro: 'Identificador da conversa inválido'
+				});
+			}
+
+			// Funcionário identificado pelo token individual.
+			const atendente = req.atendente;
+
+            await db.execute(`
+                INSERT INTO conversas_atendimento
+                    (loja, chat_id, atendente_id, ultima_atividade)
+                VALUES
+                    ('sapucaia', ?, ?, NOW(3))
+                ON DUPLICATE KEY UPDATE
+                    atendente_id = VALUES(atendente_id),
+                    ultima_atividade = NOW(3)
+            `, [chatId, atendente.id]);
+
+            return res.json({
+                sucesso: true,
+                atendente: atendente.nome,
+                chatId,
+                tempoInatividadeMinutos:
+                    TEMPO_ATENDIMENTO_MINUTOS
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao assumir atendimento:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+app.get('/api/atendimento/testar-chats',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const idsChats = await client.pupPage.evaluate(() => {
+    const chats = window.require('WAWebCollections')
+        .Chat.getModelsArray();
+
+    return chats
+        .map(chat => chat.id?._serialized)
+        .filter(Boolean);
+});
+
+console.log('TESTE IDS DIRETOS:', {
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+
+return res.json({
+    sucesso: true,
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+			console.log('Diagnóstico interno WhatsApp:', diagnostico);
+
+
+			console.log('Diagnóstico interno WhatsApp:', diagnostico);
+
+console.log(
+    'DIAGNÓSTICO CONVERSÃO DE CHATS:',
+    JSON.stringify(diagnosticoChats, null, 2)
+);
+
+console.log('TESTE IDS DIRETOS:', {
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+return res.json({
+    sucesso: true,
+    quantidade: idsChats.length,
+    exemplos: idsChats.slice(0, 5)
+});
+
+            return res.json({
+                sucesso: true,
+                quantidade: chats.length,
+                exemplos: resumo
+            });
+
+        } catch (erro) {
+			console.error(
+				'Erro ao consultar chats:',
+				erro
+			);
+
+			console.error(
+				'Stack do erro:',
+				erro?.stack
+			);
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao consultar conversas'
+            });
+        }
+    }
+);
+
+app.get(
+    '/api/atendimento/testar-contato-direto',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const telefone = String(req.query.telefone || '')
+                .replace(/\D/g, '');
+
+            if (!/^(?:55)?\d{10,11}$/.test(telefone)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone inválido'
+                });
+            }
+
+            const numero = telefone.startsWith('55')
+                ? telefone
+                : `55${telefone}`;
+
+const contato = await client.getContactById(
+    `${numero}@c.us`
+);
+
+let chatDireto = null;
+let erroChatDireto = null;
+
+try {
+    const chat = await client.getChatById(`${numero}@c.us`);
+
+    chatDireto = {
+        id: chat?.id?._serialized || null,
+        nome: chat?.name || null
+    };
+} catch (erro) {
+    erroChatDireto = erro.message;
+}
+
+const conversasEncontradas = await client.pupPage.evaluate(
+    (numeroProcurado, nomeContato, pushnameContato) => {
+        const chats = window.require('WAWebCollections')
+            .Chat.getModelsArray();
+
+        return chats
+            .filter(chat => {
+                const id = chat.id?._serialized || '';
+
+                return (
+                    id === `${numeroProcurado}@c.us` ||
+                    (nomeContato && chat.name === nomeContato) ||
+                    (pushnameContato && chat.name === pushnameContato)
+                );
+            })
+            .map(chat => ({
+                id: chat.id?._serialized,
+                nome: chat.name || null
+            }));
+    },
+    numero,
+    contato?.name || null,
+    contato?.pushname || null
+);
+
+
+return res.json({
+    sucesso: true,
+    contato: {
+        id: contato?.id?._serialized || null,
+        number: contato?.number || null,
+        isMyContact: contato?.isMyContact || false
+    },
+    conversasEncontradas,
+    chatDireto,
+    erroChatDireto
+});
+			conversasEncontradas
+
+} catch (erro) {
+    console.error('ERRO COMPLETO NO TESTE DIRETO:', {
+        mensagem: erro?.message,
+        stack: erro?.stack,
+        nome: erro?.name
+    });
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.get(
+    '/api/atendimento/testar-telefone',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const telefone = String(req.query.telefone || '')
+                .replace(/\D/g, '');
+
+            if (!/^(?:55)?\d{10,11}$/.test(telefone)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone inválido'
+                });
+            }
+
+            const numero = telefone.startsWith('55')
+                ? telefone
+                : `55${telefone}`;
+
+            const resultado = await client.pupPage.evaluate(
+                async (numeroProcurado) => {
+                    const chats = window.require('WAWebCollections')
+                        .Chat.getModelsArray();
+
+                    const encontrados = [];
+
+                    for (const chat of chats) {
+                        const chatId = chat.id?._serialized;
+
+                        if (!chatId || chatId.endsWith('@g.us')) {
+                            continue;
+                        }
+
+                        if (chatId === `${numeroProcurado}@c.us`) {
+                            encontrados.push(chatId);
+                        }
+                    }
+
+                    return {
+                        totalChats: chats.length,
+                        encontrados
+                    };
+                },
+                numero
+            );
+
+const encontrados = [...resultado.encontrados];
+
+if (encontrados.length === 0) {
+    const idsLid = await client.pupPage.evaluate(() => {
+        return window.require('WAWebCollections')
+            .Chat.getModelsArray()
+            .map(chat => chat.id?._serialized)
+            .filter(id => id && id.endsWith('@lid'));
+    });
+
+    console.log('Quantidade de conversas @lid:', idsLid.length);
+
+    for (let i = 0; i < idsLid.length; i += 50) {
+        const lote = idsLid.slice(i, i + 50);
+
+        const contatos = await client.getContactLidAndPhone(lote);
+
+        console.log('DIAGNÓSTICO LID:', JSON.stringify({
+            quantidade: contatos?.length || 0,
+            exemplo: contatos?.[0] || null
+        }, null, 2));
+
+        for (const contato of contatos || []) {
+            const telefoneContato = String(contato.pn || '')
+                .replace(/\D/g, '');
+				
+if (telefoneContato === numero) {
+    console.log('CLIENTE LOCALIZADO PELO LID:', {
+        telefone: telefoneContato,
+        lid: contato.lid,
+        pn: contato.pn
+    });
+}
+
+            if (telefoneContato === numero) {
+                const lid = contato.lid;
+                const chatId = typeof lid === 'string'
+                    ? lid
+                    : lid?._serialized;
+
+                if (chatId && idsLid.includes(chatId)) {
+                    encontrados.push(chatId);
+                }
+            }
+        }
+
+        if (encontrados.length > 0) break;
+    }
+}
+
+return res.json({
+    sucesso: true,
+    telefone: numero,
+    totalChats: resultado.totalChats,
+    encontrados
+});
+
+        } catch (erro) {
+            console.error('Erro ao testar telefone:', erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao identificar cliente'
+            });
+        }
+    }
+);
+
+app.get(
+    '/api/atendimento/testar-mensagem',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            if (!client.info) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
+            const mensagemId = String(req.query.id || '').trim();
+
+            if (!/^[a-zA-Z0-9_-]{10,100}$/.test(mensagemId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'ID de mensagem inválido'
+                });
+            }
+
+            const resultado = await client.pupPage.evaluate((idProcurado) => {
+                const chats = window.require('WAWebCollections')
+                    .Chat.getModelsArray();
+
+                const encontrados = [];
+
+                for (const chat of chats) {
+                    const mensagens = chat.msgs?.getModelsArray?.() || [];
+
+                    const encontrou = mensagens.some(msg => {
+                        const id = msg.id?.id;
+                        return id === idProcurado;
+                    });
+
+                    if (encontrou) {
+                        encontrados.push({
+                            chatId: chat.id?._serialized || null
+                        });
+                    }
+                }
+
+                return {
+                    totalChats: chats.length,
+                    encontrados
+                };
+            }, mensagemId);
+
+            return res.json({
+                sucesso: true,
+                ...resultado
+            });
+
+        } catch (erro) {
+            console.error('Erro ao localizar mensagem:', erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Falha ao localizar mensagem'
+            });
+        }
+    }
+);
+
+
+/**
+ * Registra qual funcionário enviou uma mensagem.
+ * Coutech Cell - Sapucaia
+ */
+app.post(
+    '/api/atendimento/mensagem/registrar',
+    express.json(),
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.body?.chatId || '');
+            const mensagemId = String(req.body?.mensagemId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            if (
+                !mensagemId ||
+                mensagemId.length > 255
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da mensagem inválido'
+                });
+            }
+
+            const atendente = req.atendente;
+
+            const [resultado] = await db.execute(`
+                INSERT IGNORE INTO mensagens_atendentes
+                    (mensagem_id, chat_id, atendente_id)
+                VALUES (?, ?, ?)
+            `, [
+                mensagemId,
+                chatId,
+                atendente.id
+            ]);
+
+            return res.json({
+                sucesso: true,
+                registrada: resultado.affectedRows === 1,
+                atendente: atendente.nome,
+                mensagemId
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao registrar autor da mensagem:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+
+/**
+ * Consulta os autores das mensagens de uma conversa.
+ * Coutech Cell - Sapucaia
+ */
+app.get(
+    '/api/atendimento/mensagens',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.query.chatId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            const [mensagens] = await db.execute(`
+                SELECT
+                    m.mensagem_id AS mensagemId,
+                    a.nome AS atendente
+                FROM mensagens_atendentes m
+                INNER JOIN atendentes_whatsapp a
+                    ON a.id = m.atendente_id
+                WHERE m.chat_id = ?
+                ORDER BY m.id DESC
+                LIMIT 500
+            `, [chatId]);
+
+            return res.json({
+                sucesso: true,
+                chatId,
+                mensagens
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao consultar autores das mensagens:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+
+/**
+ * Consulta o responsável por uma conversa.
+ * Coutech Cell - Sapucaia
+ */
+app.get(
+    '/api/atendimento/responsavel',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.query.chatId || '');
+
+            if (!/^(?:\d+@c\.us|\d+@lid)$/.test(chatId)) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Identificador da conversa inválido'
+                });
+            }
+
+            const [conversas] = await db.execute(`
+                SELECT
+                    c.chat_id,
+                    a.nome AS atendente,
+                    c.ultima_atividade,
+                    CASE
+                        WHEN c.atendente_id IS NOT NULL
+                         AND c.ultima_atividade >=
+                             DATE_SUB(NOW(3), INTERVAL 5 MINUTE)
+                        THEN 'ocupado'
+                        ELSE 'disponivel'
+                    END AS status
+                FROM conversas_atendimento c
+                LEFT JOIN atendentes_whatsapp a
+                    ON a.id = c.atendente_id
+                WHERE c.loja = 'sapucaia'
+                  AND c.chat_id = ?
+                LIMIT 1
+            `, [chatId]);
+
+            if (conversas.length === 0) {
+                return res.json({
+                    sucesso: true,
+                    chatId,
+                    status: 'disponivel',
+                    atendente: null
+                });
+            }
+
+            const conversa = conversas[0];
+            const ocupado =
+                conversa.status === 'ocupado' &&
+                Boolean(conversa.atendente);
+
+            return res.json({
+                sucesso: true,
+                chatId,
+                status: ocupado ? 'ocupado' : 'disponivel',
+                atendente: ocupado
+                    ? conversa.atendente
+                    : null
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao consultar responsável:',
+                erro.message
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro interno'
+            });
+        }
+    }
+);
+
+const upload = multer({ storage });
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// --- Carregar contatos autorizados a partir do arquivo de textoo --
+let allowedContacts = [];
+try {
+  const contactsData = fs.readFileSync("allowed.txt", "utf8");
+  // Divide o conteúdo em linhas, remove espaços e filtra linhas vaziasss
+  allowedContacts = contactsData
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+  console.log("Contatos autorizados carregados:");
+} catch (err) {
+  console.error("Erro ao carregar contatos do arquivo allowed.txt:", err.message);
+}
+
+// Criando o cliente do WhatsApp Web
+
+const client = new Client({
+    authStrategy: new LocalAuth(),
+
+    webVersionCache: {
+        type: 'none'
+    },
+
+    puppeteer: {
+        headless: true,
+
+        executablePath:
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+
+        protocolTimeout: 90000,
+
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage"
+        ]
+    }
+});
+
+let atendimentoHumano = new Set(); // Armazena usuários em atendimento humano
+let clientesAtendidos = new Set(); // Garante que a mensagem inicial só seja enviada uma vez por cliente
+let silencedChats = new Set(); // Lista de conversas silenciadas
+let ultimoProdutoConsultado = new Map(); // Guardar o últiimo produto consultadoo
+
+// Gera o QR Code para autenticação
+client.on("qr", (qr) => {
+    console.log("Escaneie este QR Code no WhatsApp Web:");
+    qrcode.generate(qr, { small: true });
+});
+
+// Confirma que o bot foi iniciado
+client.on('ready', async () => {
+    console.log("🤖 Bot conectado e pronto para uso!");
+	
+	  const page = await client.pupPage; 
+	
+	  await page.evaluate(() => {
+    if (window.WWebJS && window.WWebJS.sendSeen) {
+      window.WWebJS.sendSeen = () => {};
+    }
+  });
+});
+
+// Funções para remover clientes da lista
+const removerAtendimentoHumano = (chatId) => {
+    setTimeout(async () => {
+        if (atendimentoHumano.has(chatId)) {
+            atendimentoHumano.delete(chatId);
+        }
+    }, 60 * 60 * 1000);
+};
+
+const removerClientesAtendidos = (chatId) => {
+    setTimeout(() => {
+        clientesAtendidos.delete(chatId);
+    }, 60 * 60 * 1000);
+};
+
+const removerSilencedChats = (chatId) => {
+    setTimeout(() => {
+		silencedChats.delete(chatId);
+		clientesAtendidos.delete(chatId);
+    }, 30 * 60 * 1000);
+};
+
+// Função para buscar preços
+function normalizarTexto(texto) {
+    return String(texto || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function formatarPreco(valor) {
+    if (valor === null || valor === undefined || valor === "") {
+        return "0,00";
+    }
+
+    let numero;
+
+    if (typeof valor === "number") {
+        numero = valor;
+    } else {
+        const texto = String(valor).trim();
+
+        // Formato brasileiro: 1.250,90
+        if (texto.includes(",") && texto.includes(".")) {
+            numero = Number(
+                texto
+                    .replace(/\./g, "")
+                    .replace(",", ".")
+            );
+
+        // Formato brasileiro simples: 70,00
+        } else if (texto.includes(",")) {
+            numero = Number(texto.replace(",", "."));
+
+        // Formato da API: 70.00
+        } else {
+            numero = Number(texto);
+        }
+    }
+
+    if (!Number.isFinite(numero)) {
+        console.error("Preço inválido recebido do GestãoClick:", valor);
+        return "0,00";
+    }
+
+    return numero.toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function prepararPesquisa(texto) {
+    let pesquisa = normalizarTexto(texto);
+	
+	// Remove marcas que podem não estar no nome cadastrado
+	pesquisa = pesquisa
+	  .replace(/\bsamsung\b/g, '')
+	  .replace(/\bmotorola\b/g, '')
+	  .replace(/\bapple\b/g, '')
+	  .replace(/\s+/g, ' ')
+	  .trim();
+
+    // Tela
+    pesquisa = pesquisa.replace(/\bdisplay\b/g, "tela");
+    pesquisa = pesquisa.replace(/\bfrontal\b/g, "tela");
+    pesquisa = pesquisa.replace(/\bcombo\b/g, "tela");
+	pesquisa = pesquisa.replace(/\bnacional\b/g, "nac");
+
+    // Placa de carga
+	pesquisa = pesquisa.replace(/\bdock de carga iphone\b/g, "flex de carga");	
+	pesquisa = pesquisa.replace(/\bdock iphone\b/g, "flex de carga");
+	pesquisa = pesquisa.replace(/\bdock\b/g, "placa de carga");
+	pesquisa = pesquisa.replace(/\placa\b/g, "placa de carga");	
+
+    // Se não informou o tipo da peça, assume tela
+    const tipos = [
+        "tela",
+        "bateria",
+        "placa de carga",
+        "flex",
+		"tampa",
+		"cola",
+		"chave",
+		"luva",
+		"carcaca",
+		"conector"
+    ];
+
+    const possuiTipo = tipos.some(tipo => pesquisa.includes(tipo));
+
+    if (!possuiTipo) {
+        pesquisa = "tela " + pesquisa;
+    }
+
+    return pesquisa.trim();
+}
+
+function pesquisaValida(pesquisa) {
+    const tiposPermitidos = [
+        "tela",
+        "bateria",
+        "placa de carga",
+        "flex",
+		"tampa",
+		"cola",
+		"chave",
+		"luva",
+		"carcaca",
+		"conector"
+    ];
+
+    return tiposPermitidos.some(tipo =>
+        pesquisa.includes(tipo)
+    );
+
+}
+
+async function buscarPreco(produto, chatId) {
+    if (!produto) {
+        return "⚠ Nenhum produto foi informado. Digite o nome corretamente.";
+    }
+
+    const pesquisa = prepararPesquisa(produto);
+
+    if (!pesquisaValida(pesquisa)) {
+        return `⚠️ Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
+
+Exemplos:
+• tela A12
+• bateria A12
+• placa de carga A12
+• flex A12
+
+Digite novamente sua consulta.`;
+    }
+
+    if (
+        !process.env.GESTAOCLICK_ACCESS_TOKEN ||
+        !process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN
+    ) {
+        console.error("Tokens do GestãoClick não configurados no .env.");
+
+        return `⚠ Não consegui consultar o sistema agora.
+
+Digite 2️⃣ para atendimento.`;
+    }
+
+    try {
+        const resposta = await axios.get(
+            "https://api.gestaoclick.com/produtos",
+            {
+                headers: {
+                    "access-token":
+                        process.env.GESTAOCLICK_ACCESS_TOKEN,
+
+                    "secret-access-token":
+                        process.env.GESTAOCLICK_SECRET_ACCESS_TOKEN,
+
+                    "Accept": "application/json"	
+                },
+
+                params: {
+					loja_id: 552685,
+					nome: pesquisa,
+					ativo: 1
+				},
+
+                timeout: 15000
+            }
+        );
+
+        const produtos = Array.isArray(resposta.data?.data)
+            ? resposta.data.data
+            : [];
+
+        const palavrasPesquisa = pesquisa
+            .split(" ")
+            .filter(Boolean);
+
+		const encontrados = produtos.filter(item => {
+			const nomeProduto = normalizarTexto(item.nome);
+
+			if (!nomeProduto) {
+				return false;
+			}
+
+			const correspondePesquisa = palavrasPesquisa.every(palavra =>
+				nomeProduto.includes(palavra)
+			);
+
+			const estoque = Number(
+				String(item.estoque ?? "0")
+					.replace(",", ".")
+			);
+
+			const possuiEstoque =
+				Number.isFinite(estoque) &&
+				estoque > 0;
+
+			return correspondePesquisa && possuiEstoque;
+		});
+
+        if (encontrados.length === 0) {
+            return `❌ Produto não encontrado.
+
+		Exemplos:
+		• tela A12
+		• bateria A12
+		• placa de carga A12
+		• flex A12
+
+		Para atendimento digite 2️⃣`;
+        }
+
+        const encontradosLimitados = encontrados.slice(0, 15);
+
+        /*
+         * Guarda o primeiro resultado para manter compatibilidade
+         * com a opção 3 do seu bot.
+         */
+        ultimoProdutoConsultado.set(chatId, {
+            Produto: encontradosLimitados[0].nome,
+            Preco: encontradosLimitados[0].valor_venda,
+            Estoque: encontradosLimitados[0].estoque,
+            Imagem: null
+        });
+
+        setTimeout(() => {
+            ultimoProdutoConsultado.delete(chatId);
+        }, 30 * 60 * 1000);
+
+        let mensagem =
+            `🔎 No estoque temos essas opções para ` +
+            `*${produto.toUpperCase()}*:\n\n`;
+
+        encontradosLimitados.forEach((item, index) => {
+            mensagem += `${index + 1}️⃣ *${item.nome}*\n`;
+            mensagem +=
+                `💰 R$ ${formatarPreco(item.valor_venda)}\n`;
+
+            if (
+                item.estoque !== undefined &&
+                item.estoque !== null &&
+                item.estoque !== ""
+            )
+
+            mensagem += "\n";
+        });
+
+        mensagem += "Para fazer pedido digite 2️⃣";
+
+        return mensagem;
+
+    } catch (erro) {
+        console.error("❌ Erro ao consultar GestãoClick:", {
+            mensagem: erro.message,
+            status: erro.response?.status,
+            resposta: erro.response?.data
+        });
+
+        if (erro.code === "ECONNABORTED") {
+            return `⚠ O GestãoClick demorou para responder.
+
+Tente novamente ou digite 2️⃣ para atendimento.`;
+        }
+
+        if (
+            erro.response?.status === 401 ||
+            erro.response?.status === 403
+        ) {
+            return `⚠ Não foi possível autenticar no GestãoClick.
+
+Digite 2️⃣ para atendimento.`;
+        }
+
+        return `⚠ Não consegui consultar o GestãoClick agora.
+
+Digite 2️⃣ para atendimento.`;
+    }
+}
+
+const horarioAtendimento = {
+    inicio: 9,        // 09:00
+    fim: 18,          // 18:00
+    minutosFim: 00,   // Até 18:30
+    intervaloInicio: 12,   // Início do intervalo de não atendimento
+    intervaloFim: 12,     // Fim do intervalo de não atendimento
+};
+
+// Horário de atendimento especial para sabado
+const horarioSabado = {
+    inicio: 9,        // 09:00
+    fim: 17,          // 18:00 (horário reduzido para sabado)
+    minutosFim: 00,    // Sem minutos após as 18:00
+    intervaloInicio: 12,   // Início do intervalo de não atendimentoo
+    intervaloFim: 12,     // Fim do intervalo de não atendimento
+};
+
+// Função para verificar se está dentro do horário de atendimento
+const estaDentroDoHorario = () => {
+	const agoraBrasil = DateTime.now().setZone("America/Sao_Paulo");
+    const horaAtual = agoraBrasil.hour;
+    const minutosAtuais = agoraBrasil.minute;
+    const diaSemana = agoraBrasil.weekday; // 1 - Segunda, 2 - Terça, ..., 7 - Domingo
+
+    // Se for Domingo (dia 7)
+    if (diaSemana === 7) {
+            return false;
+        }
+
+    // Se for sabado (dia 6)
+    if (diaSemana === 6) {
+        // Horário reduzido no sabado (09:00 - 18:00 com intervalo de almoço)
+        if (horaAtual >= horarioSabado.inicio && horaAtual < horarioSabado.intervaloInicio) {
+            return true; // Entre 09:00 e 12:00
+        }
+
+        if (horaAtual >= horarioSabado.intervaloFim && horaAtual < horarioSabado.fim) {
+            return true; // Entre 13:00 e 18:00
+        }
+
+        return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
+    }
+
+    // Horário normal de segunda a sexta (09:00 - 18:00 com intervalo de almoço)
+    if (horaAtual >= horarioAtendimento.inicio && horaAtual < horarioAtendimento.intervaloInicio) {
+        return true; // Entre 09:00 e 12:00
+    }
+
+    if (horaAtual >= horarioAtendimento.intervaloFim && horaAtual < horarioAtendimento.fim) {
+        return true; // Entre 13:00 e 18:00
+    }
+
+    // Verifica se a hora está dentro do intervalo de 18:00 até 18:30
+    if (horaAtual === horarioAtendimento.fim && minutosAtuais <= horarioAtendimento.minutosFim) {
+        return true; // Entre 18:00 e 18:30
+    }
+
+    return false; // Fora do horário de atendimento ou dentro do intervalo de não atendimento
+};
+
+// FUNÇÃO PARA ENVIAR LISTA DE TRANSMISSAO
+async function enviarMensagemEmMassa(texto, caminhoImagem) {
+    console.log("🚀 Iniciando envio em massa...");
+	
+	if (!caminhoImagem) {
+    console.log("Sem imagem, enviando só texto...");
+    
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+        await client.sendMessage(chatId, texto);
+		
+		console.log("✅ Enviado para:", numero);
+		
+		const delay = Math.floor(Math.random() * 3000) + 4000;
+		await new Promise(r => setTimeout(r, delay));
+		}
+
+    console.log("✅ Disparo finalizado.");
+    return;
+}
+
+	if (path.extname(caminhoImagem).toLowerCase() === ".jpeg" || path.extname(caminhoImagem).toLowerCase() === ".jpg" || path.extname(caminhoImagem).toLowerCase() === ".png") {
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+
+        try {
+            if (caminhoImagem) {
+				const ext = path.extname(caminhoImagem).toLowerCase();
+
+				let mimetype = "image/jpeg";
+
+				const media = new MessageMedia(
+					mimetype,
+					fs.readFileSync(caminhoImagem, { encoding: "base64" })
+				);
+				
+				await client.sendMessage(chatId, media, {
+                    caption: texto
+                });
+				
+            } else {
+                await client.sendMessage(chatId, texto);
+            }
+
+            console.log("✅ Enviado para:", numero);
+
+            const delay = Math.floor(Math.random() * 4000) + 4000;
+			await new Promise(r => setTimeout(r, delay));
+
+        } catch (erro) {
+			console.error(
+				'❌ Erro ao enviar para:',
+				numero,
+				erro?.stack || erro?.message || erro
+			);
+		}
+    }}
+	
+	if (path.extname(caminhoImagem).toLowerCase() === ".mp4" || path.extname(caminhoImagem).toLowerCase() === ".mov") {
+    for (const numero of allowedContacts) {
+        const chatId = numero + "@c.us";
+
+        try {
+            if (caminhoImagem) {
+				const ext = path.extname(caminhoImagem).toLowerCase();
+
+				let mimetype = "video/mp4";
+
+				const media = new MessageMedia(
+					mimetype,
+					fs.readFileSync(caminhoImagem, { encoding: "base64" })
+				);
+				
+				await client.sendMessage(chatId, media, {
+                    caption: texto
+                });
+				
+            } else {
+                await client.sendMessage(chatId, texto);
+            }
+
+            console.log("✅ Enviado para:", numero);
+
+            const delay = Math.floor(Math.random() * 4000) + 4000;
+			await new Promise(r => setTimeout(r, delay));
+
+        } catch (erro) {
+			console.error(
+				'❌ Erro ao enviar para:',
+				numero,
+				erro?.stack || erro?.message || erro
+			);
+		}
+    }}
+
+    console.log("✅ Disparo finalizado.");
+	
+    if (fs.existsSync(caminhoImagem)) {
+        fs.unlink(caminhoImagem, (err) => {
+            if (err) console.log("Erro ao excluir:", err.message);
+            else console.log("🗑️ Arquivo removido");
+        });
+    }	
+}
+
+client.on('disconnected', (reason) => {
+    console.log('❌ Cliente desconectado:', reason);
+});
+
+client.on('auth_failure', msg => {
+    console.log('❌ Falha autenticação:', msg);
+});
+
+client.on('change_state', state => {
+    console.log('🔄 Estado mudou:', state);
+});
+
+client.on("message_revoke_everyone", async (after, before) => {
+
+    if (!before) return;
+	
+	if (before.from === "status@broadcast" || before.from.endsWith("@g.us")) {
+		return;
+	}
+
+    let numeroAtendente = null;
+    let numeroCliente = null;
+
+    if (before.fromMe) {
+        // Loja enviou mensagem e apagou
+        numeroAtendente = before.from.split("@")[0];
+        numeroCliente = before.to.split("@")[0];
+    } else {
+        // Cliente enviou e apagou
+        numeroCliente = before.from.split("@")[0];
+        numeroAtendente = before.to.split("@")[0];
+    }
+
+    try {
+        await db.execute(`
+            INSERT INTO mensagens_excluidas 
+            (message_id, chat, body, numero_atendente, numero_cliente, data_envio, data_exclusao)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+            before.id.id,
+            before.from,
+            before.body || "[MÍDIA]",
+            numeroAtendente,
+            numeroCliente,
+            new Date(before.timestamp * 1000),
+            new Date()
+        ]);
+
+        console.log("Mensagem excluída salva com números separados.");
+
+    } catch (error) {
+        console.error("Erro ao salvar mensagem excluída:", error.message);
+    }
+});
+
+// Evento para DETECTAR mensagens enviadas pelo próprio usuário e SILENCIAR a conversa
+client.on("message_create", async (message) => {
+	
+    // só processa mensagens enviadas pelo bot
+    if (!message.fromMe) return;
+
+    const chatId = message.to || message.from;
+
+    // garante que body nunca seja undefined
+    const body = message.body || "";
+
+    // palavras-chave que IDENTIFICAM resposta automática
+        const mensagensDoBot = [
+		"📞",
+		"💰",
+		"⏳",
+		"❌",
+		"⚠",
+		"⚠️",
+		"🔎",
+		"Olá!",
+		"Digite o nome do produto",
+		"Como posso te ajudar?",
+		"Para fazer pedido digite 2️⃣",
+		"Digite a opção",
+		"Nenhum produto",
+		"Para consultar",
+		"tipo da peça",
+		"modelo do aparelho",
+		"Digite novamente sua consulta"
+		];
+
+    const ehMensagemDoBot = mensagensDoBot.some(palavra =>
+        body.includes(palavra)
+    );
+
+    // 🔒 só silencia se NÃO for mensagem automática
+    if (!ehMensagemDoBot) {
+        silencedChats.add(chatId);
+        console.log(`Chat silenciado manualmente: ${chatId}`);
+        removerSilencedChats(chatId);
+    }
+});
+
+	// Função pra ajeitar o downloadMedia() até sair atualização do whatsapp-web.js
+	function corrigirIdMensagem(message) {
+		if (!message?.id) {
+			return false;
+		}
+
+		if (message.id._serialized) {
+			return true;
+		}
+
+		if (message.id.$1) {
+			message.id._serialized = message.id.$1;
+			return true;
+		}
+
+		if (
+			message.id.fromMe !== undefined &&
+			message.id.remote &&
+			message.id.id
+		) {
+			message.id._serialized =
+				`${message.id.fromMe}_${message.id.remote}_${message.id.id}`;
+
+			return true;
+		}
+
+		return false;
+	}
+	
+function normalizarTelefoneBrasil(telefone) {
+  let numero = String(telefone || '').replace(/\D/g, '');
+
+  if (!numero) {
+    throw new Error('Telefone não informado');
+  }
+
+  if (numero.startsWith('55')) {
+    return numero;
+  }
+
+  return `55${numero}`;
+}
+
+function normalizarTelefoneConta(telefone) {
+    let numero = String(telefone || '')
+        .replace(/\D/g, '');
+
+    if (
+        numero.startsWith('55') &&
+        (numero.length === 12 || numero.length === 13)
+    ) {
+        numero = numero.substring(2);
+    }
+
+    return numero;
+}
+
+function converterValorConta(valor) {
+    if (
+        valor === null ||
+        valor === undefined ||
+        valor === ''
+    ) {
+        return NaN;
+    }
+
+    if (typeof valor === 'number') {
+        return valor;
+    }
+
+    let texto = String(valor)
+        .replace(/R\$/gi, '')
+        .trim();
+
+    if (
+        texto.includes('.') &&
+        texto.includes(',')
+    ) {
+        texto = texto
+            .replace(/\./g, '')
+            .replace(',', '.');
+    } else if (texto.includes(',')) {
+        texto = texto.replace(',', '.');
+    }
+
+    return Number(texto);
+}
+
+function formatarValorConta(valor) {
+    return Number(valor || 0).toLocaleString(
+        'pt-BR',
+        {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }
+    );
+}
+
+function escaparHtml(valor) {
+    return String(valor ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function formatarDataBrasil(data) {
+    if (!data) {
+        return '';
+    }
+
+    return new Date(data).toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo'
+    });
+}
+
+function mensagemPainel(texto, tipo = 'sucesso') {
+    const classe =
+        tipo === 'erro'
+            ? 'alerta erro'
+            : 'alerta sucesso';
+
+    return `
+        <div class="${classe}">
+            ${escaparHtml(texto)}
+        </div>
+    `;
+}
+
+function montarMensagemPedido(dados) {
+  let mensagem =
+    `Pedido nº ${dados.pedido}\n` +
+    `Cliente: ${dados.cliente || 'cliente'}\n` +
+    `Endereço: ${dados.endereco}\n` +
+	`Cidade: ${dados.cidade}\n`;
+
+	if (dados.produtos?.length) {
+		mensagem += `*Produtos:*\n`;
+
+	for (const produto of dados.produtos) {
+		mensagem +=
+		  `• ${produto.nome}\n` +
+		  `  Qtd: ${produto.quantidade} |`;
+
+		if (produto.desconto && produto.desconto !== '0,00') {
+
+		  mensagem +=
+			`  Vlr. Unit: R$ ${produto.valorUnitario}\n` +
+			`  Desc. Item: R$ ${produto.desconto}\n`;
+
+		}
+
+		mensagem +=
+		  `  Valor: R$ ${produto.valorTotal}\n\n`;
+	  }
+	}
+
+  if (dados.valorProdutos) {
+    mensagem +=
+      `Valor dos produtos: R$ ${dados.valorProdutos}\n`;
+  }
+
+  if (
+    dados.desconto &&
+    dados.desconto !== '0,00'
+  ) {
+    mensagem +=
+      `Desconto geral: R$ ${dados.desconto}\n`;
+  }
+
+  mensagem +=
+    `*Total: R$ ${dados.total || '0,00'}*\n`;
+
+  if (dados.formaPagamento) {
+    mensagem +=
+      `Forma de pagamento: ${dados.formaPagamento}\n`;
+  }
+
+  if (
+    dados.coleta &&
+    dados.coleta.toLowerCase() !== 'sem' &&
+    dados.coleta.toLowerCase() !== 'sem coleta' &&
+    dados.coleta.toLowerCase() !== 'sem coletas'
+  ) {
+    mensagem +=
+      `Coletar: ${dados.coleta}\n`;
+  }
+
+  mensagem +=
+    `\nAtendente: ${dados.atendente || 'Não informado'}\n` +
+    `A Coutech Cell agradece a preferência!`;
+
+  return mensagem;
+}
+
+function montarMensagemSaldo(dados) {
+    const devolucao =
+        dados.formaPagamento === 'Devolução de Mercadorias';
+
+    const observacao = String(dados.observacao || '').trim();
+
+    const detalhes = devolucao && observacao
+        ? '\n\n📦 Peças devolvidas / observação:\n' + observacao
+        : '';
+
+    return (
+`💳 *ATUALIZAÇÃO DA SUA CONTA*
+
+💰 ${devolucao ? 'Valor abatido' : 'Valor recebido'}:
+R$ ${dados.valorPagamento}
+
+📌 Forma de pagamento:
+${dados.formaPagamento}${detalhes}
+
+💳 Saldo atual:
+*R$ ${dados.saldo}*
+
+Obrigado pela preferência!
+*COUTECH CELL*`
+    );
+}
+
+async function enviarSaldoWhatsApp({
+  telefone,
+  cliente,
+  valorPagamento,
+  formaPagamento,
+  saldo,
+  observacao
+}) {
+  if (!client.info) {
+    throw new Error('WhatsApp não está conectado');
+  }
+
+  const numero = normalizarTelefoneBrasil(telefone);
+
+  const numeroWhatsApp =
+    await client.getNumberId(numero);
+
+  if (!numeroWhatsApp) {
+    throw new Error(
+      `O número ${telefone} não foi encontrado no WhatsApp`
+    );
+  }
+
+	const mensagem = montarMensagemSaldo({
+		cliente,
+		valorPagamento,
+		formaPagamento,
+		saldo,
+		observacao
+	});
+
+  await client.sendMessage(
+    numeroWhatsApp._serialized,
+    mensagem
+  );
+
+  console.log(
+    `💳 Mensagem de saldo enviada para ${cliente}.`
+  );
+
+  return true;
+}
+
+// Evento de mensagem recebida
+client.on("message", async (message) => {
+	
+	try {
+		if (message.fromMe) return;
+		if (message.timestamp < inicioBot - 10) return;
+
+	if (message.from === "status@broadcast" || message.from.endsWith("@g.us")) {
+		return;
+	}
+	
+	const chatId = message.from;
+        // ==========================================
+        // CONTROLE DE ATENDIMENTO - SAPUCAIA
+        // Atualizar atividade quando cliente escreve
+        // ==========================================
+        try {
+            await db.execute(`
+                INSERT INTO conversas_atendimento
+                    (loja, chat_id, ultima_atividade)
+                VALUES
+                    ('sapucaia', ?, NOW(3))
+                
+				ON DUPLICATE KEY UPDATE
+					atendente_id = IF(
+						ultima_atividade < DATE_SUB(NOW(3), INTERVAL 5 MINUTE),
+						NULL,
+						atendente_id
+					),
+					ultima_atividade = NOW(3)
+
+            `, [chatId]);
+        } catch (erroAtendimento) {
+            console.error(
+                'Erro ao atualizar atividade da conversa:',
+                erroAtendimento.message
+            );
+        }
+	const msg = message.body.toLowerCase().trim();
+	
+	if (!msg && !message.hasMedia) {
+		return;
+	}
+
+	let phone;
+
+	if (chatId.endsWith("@lid")) {
+		const resultado = await client.getContactLidAndPhone([chatId]);
+
+		if (resultado && resultado.length > 0 && resultado[0].pn) {
+			phone = String(resultado[0].pn).replace("@c.us", "");
+		}
+	} else {
+		phone = chatId.replace("@c.us", "");
+	}
+	
+	// ==========================================
+	// SALVAR LINK DE COMPROVANTE INFINITEPAY
+	// ==========================================
+
+	if (
+		!message.hasMedia &&
+		msg.includes("recibo.infinitepay.io/statements/")
+	) {
+		try {
+
+			const matchLink = message.body.match(
+				/https?:\/\/recibo\.infinitepay\.io\/statements\/[^\s]+/i
+			);
+
+			if (!matchLink) {
+				console.log("⚠️ Link InfinitePay não pôde ser extraído.");
+				return;
+			}
+
+			const linkInfinitePay = matchLink[0];
+
+			console.log("🔗 Comprovante InfinitePay recebido:");
+			console.log(linkInfinitePay);
+
+			await db.execute(
+				`
+				INSERT INTO comprovantes_pix_links
+				(
+					url,
+					telefone,
+					processado
+				)
+				VALUES (?, ?, 0)
+				`,
+				[
+					linkInfinitePay,
+					phone
+				]
+			);
+
+			console.log(
+				"✅ Link InfinitePay salvo no banco para conferência."
+			);
+
+		} catch (erro) {
+
+			console.error(
+				"❌ Erro ao salvar link InfinitePay:",
+				erro
+			);
+
+		}
+
+		return;
+	}
+	
+	// Bloco que salva o comprovantee
+	if (message.hasMedia) {
+		try {
+			let media;
+
+			try {
+				const idCorrigido = corrigirIdMensagem(message);
+
+				if (!idCorrigido) {
+					console.error(
+						"❌ Não foi possível obter o ID correto da mensagem."
+					);
+					console.dir(message.id, { depth: null });
+					return;
+				}
+
+				media = await message.downloadMedia();
+			} catch (erroDownload) {
+				console.error("❌ ERRO NO DOWNLOAD DA MÍDIA");
+				console.error("Mensagem:", erroDownload?.message);
+				console.error("Nome:", erroDownload?.name);
+				console.error("Stack:", erroDownload?.stack);
+				console.dir(erroDownload, { depth: null });
+				return;
+			}
+
+			if (!media) {
+				console.log("❌ downloadMedia retornou null ou undefined");
+				return;
+			}
+
+			if (!media.data || !media.mimetype) {
+				console.log("❌ Mídia sem conteúdo ou sem mimetype");
+				return;
+			}
+
+			const mimetype = String(media.mimetype)
+				.split(";")[0]
+				.toLowerCase()
+				.trim();
+
+			const tiposPermitidos = [
+				"application/pdf",
+				"image/jpeg",
+				"image/jpg",
+				"image/png"
+			];
+
+			if (!tiposPermitidos.includes(mimetype)) {
+				console.log("Arquivo ignorado:", mimetype);
+				return;
+			}
+
+			const tamanhoBytes = Buffer.byteLength(media.data, "base64");
+
+			let ehComprovante = true;
+
+			if (mimetype.startsWith("image/")) {
+				try {
+
+					const resultado = await Tesseract.recognize(
+						`data:${mimetype};base64,${media.data}`,
+						"por"
+					);
+
+					const texto = String(resultado?.data?.text || "")
+						.toLowerCase();
+						
+					// Ignorar imagens de entrega
+					if (
+						texto.includes("entrega moto") ||
+						texto.includes("entrega carro") ||
+						texto.includes("aliexpress")
+					) {
+						console.log("Imagem ignorada: imagem de entrega.");
+						return;
+					}
+
+					const palavrasChave = [
+						"pix",
+						"comprovante",
+						"pagamento",
+						"valor",
+						"r$",
+						"transferencia",
+						"transferência",
+						"enviado",
+						"recebido"
+					];
+
+					ehComprovante = palavrasChave.some(palavra =>
+						texto.includes(palavra)
+					);
+
+					if (!ehComprovante) {
+						console.log("Imagem ignorada: não parece ser comprovante");
+						return;
+					}
+
+				} catch (erroOCR) {
+					console.error("❌ ERRO NO OCR");
+					console.error("Mensagem:", erroOCR?.message);
+					console.error("Stack:", erroOCR?.stack);
+					console.dir(erroOCR, { depth: null });
+					return;
+				}
+			}
+
+			const agoraBrasil = DateTime.now()
+				.setZone("America/Sao_Paulo");
+
+			const agora = agoraBrasil.toFormat("dd-MM-yyyy_HH-mm-ss-SSS");
+			const dataHoje = agoraBrasil.toFormat("yyyy-MM-dd");
+			const nomeArquivo = `comp_${agora}_${phone}`;
+
+			try {
+				console.log("4️⃣ Enviando para o Cloudinary...");
+
+				const resultadoCloudinary = await cloudinary.uploader.upload(
+					`data:${mimetype};base64,${media.data}`,
+					{
+						folder: `comprovantes_sapucaia/${dataHoje}`,
+						public_id: nomeArquivo,
+						resource_type: "auto",
+						overwrite: false
+					}
+				);
+
+				console.log(
+					"✅ Comprovante enviado:",
+					resultadoCloudinary.secure_url
+				);
+
+			} catch (erroCloudinary) {
+				console.error("❌ ERRO NO CLOUDINARY");
+				console.error("Mensagem:", erroCloudinary?.message);
+				console.error("Código HTTP:", erroCloudinary?.http_code);
+				console.error("Stack:", erroCloudinary?.stack);
+				console.dir(erroCloudinary, { depth: null });
+				return;
+			}
+
+		} catch (erro) {
+			console.error("❌ ERRO GERAL NO COMPROVANTE");
+			console.error("Mensagem:", erro?.message);
+			console.error("Nome:", erro?.name);
+			console.error("Stack:", erro?.stack);
+			console.dir(erro, { depth: null });
+		}
+
+		return;
+	}
+  
+      // Se o chat estiver silenciado, ignorar a mensagem
+	if (silencedChats.has(chatId) && !message.hasMedia) {
+		console.log(`Chat silenciado (${phone}), ignorando mensagem.`);
+		return;
+	}
+
+  // Verifica se o remetente está na lista de contatos autorizados
+  if (!allowedContacts.includes(phone)) {
+	console.log(`Número não autorizado (${phone}). Mensagem ignorada.`);
+	return;
+  }
+  
+// comando para disparo em massa
+if (msg === "/disparo") {
+
+    const mensagem = `Olá! 👋
+Estamos passando para informar uma atualização importante.
+Caso precise de atendimento basta responder esta mensagem.
+Atenciosamente
+*Coutech Cell*`;
+    await client.sendMessage(chatId, "🚀 Iniciando envio para todos os contatos...");
+    await enviarMensagemEmMassa(mensagem);
+    return;
+}
+
+  	// Enviar foto para o cliente
+if (msg === "3") {
+    const produto = ultimoProdutoConsultado.get(chatId);
+
+    if (!produto) {
+        await client.sendMessage(chatId, "❌ Nenhum produto consultado ainda.");
+        return;
+    }
+
+const caminhoImagem = `./fotos/${produto.Imagem}`;
+
+    if (!fs.existsSync(caminhoImagem)) {
+        await client.sendMessage(chatId, "❌ Foto do produto não encontrada.");
+        return;
+    }
+
+    const media = MessageMedia.fromFilePath(caminhoImagem);
+
+    await client.sendMessage(chatId, media, {
+        caption: `📸 *${produto.Produto}*`
+    });
+
+    // 🔓 libera nova consulta
+	clientesAtendidos.delete(chatId);
+
+    return;
+	}
+
+    if (msg === "atendimento" || msg === "pedido") {
+        if (estaDentroDoHorario()) {
+        atendimentoHumano.add(chatId);
+        await client.sendMessage(chatId, "📞 Você será atendido em breve. Aguarde...");
+		removerAtendimentoHumano(chatId);
+        removerClientesAtendidos(chatId);
+
+      } else {
+			await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
+		}
+        return;
+    }
+
+    if (msg === "consultar valor") {
+        atendimentoHumano.delete(chatId);
+        await client.sendMessage(chatId, `🔎 Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
+
+Exemplos:
+• tela A12
+• bateria A12
+• placa de carga A12
+• flex A12
+
+Digite novamente sua consulta.`);
+        removerClientesAtendidos(chatId);	
+		return;
+    }
+
+    // Se o usuário pediu para falar com atendente, o bot não responde mais
+    if (atendimentoHumano.has(chatId)) {
+        return;
+    }
+	
+	if (["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite"].includes(msg)) {
+		await client.sendMessage(chatId, "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido");
+		clientesAtendidos.add(chatId);
+		return;
+	}
+	
+	if (msg === "1" || msg === "2") {
+		clientesAtendidos.add(chatId); // Marca o cliente como atendidooo
+
+	} else {
+if (!clientesAtendidos.has(chatId)) {
+    const respostaPossivel = await buscarPreco(msg, chatId);
+
+    // Se buscarPreco retornou algo que não é a mensagem de erro padrão
+    if (!respostaPossivel.startsWith("❌ Produto não encontrado") &&
+        !respostaPossivel.startsWith("⚠ Nenhum produto")) {
+        clientesAtendidos.add(chatId);
+        await client.sendMessage(chatId, respostaPossivel);
+        return;
+    }
+
+    // Se não parece uma tentativa de consulta válida, manda mensagem orientando
+    try {
+        await client.sendMessage(
+            chatId,
+            "Olá! Como posso te ajudar?\n 1️⃣ - Consultar valor\n 2️⃣ - Atendimento/Pedido"
+        );
+        clientesAtendidos.add(chatId);
+    } catch (error) {
+        if (error.message.includes("Could not get the quoted message")) {
+            console.warn("Aviso: Não foi possível obter a mensagem citada. Enviando mensagem mesmo assim.");
+        } else {
+            console.error("Erro ao enviar mensagem:", error.message);
+        }
+    }
+    return;
+}
+	}
+
+		// Lógica para responderr às opções "1" e "2"
+    if (msg === "2") {
+        if (estaDentroDoHorario()) {
+        atendimentoHumano.add(chatId);
+        await client.sendMessage(chatId, "📞 Você será atendido em breve. Aguarde...");
+		removerAtendimentoHumano(chatId);
+        removerClientesAtendidos(chatId);
+		
+      } else {
+            await client.sendMessage(chatId, "⏳ No momento, não estamos atendendo. Nosso horário de atendimento é de Seg a Sex de 9h às 18h. Sábado de 9h às 17h.\nPor favor, deixe sua mensagem, e retornaremos assim que possível dentro do nosso horário de atendimento.\n\n Agradecemos pela sua compreensão! 😊\n\n Atenciosamente,\n Coutech Cell");
+		}
+        return;
+    }
+
+	else if (msg === "1") {
+    await client.sendMessage(chatId, `🔎 Para consultar, digite o *tipo da peça* e o *modelo do aparelho*.
+
+Exemplos:
+• tela A12
+• bateria A12
+• placa de carga A12
+• flex A12`);
+		   // Remove o cliente da lista de atendimento após 1 minutoo
+			removerClientesAtendidos(chatId);
+        return;
+}		
+
+const respostaPreco = await buscarPreco(msg, chatId);
+
+if (respostaPreco.startsWith("❌ Produto não encontrado")) {
+       if (estaDentroDoHorario()) {
+       atendimentoHumano.add(chatId);
+       await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n📞 Vou te encaminhar para um atendente.");
+	   removerAtendimentoHumano(chatId);
+       removerClientesAtendidos(chatId);
+     } else {
+         await client.sendMessage(chatId, "❌ Produto não encontrado.\n\n⏳ Assim que nossa equipe estiver em horário de atendimento iremos lhe ajudar.");
+	 }
+       return;
+}
+
+await client.sendMessage(chatId, respostaPreco);
+
+    } catch (error) {
+
+        console.error("ERRO GERAL MESSAGE:", error);
+
+    }
+										
+});
+
+async function iniciarClienteWhatsApp() {
+    try {
+        console.log("🔄 Iniciando cliente do WhatsApp...");
+        await client.initialize();
+    } catch (erro) {
+        const mensagem = String(erro?.message || erro);
+
+        console.error(
+            "❌ Erro ao iniciar o WhatsApp:",
+            mensagem
+        );
+
+        if (
+            mensagem.includes("Execution context was destroyed") ||
+            mensagem.includes("Runtime.callFunctionOn") ||
+            mensagem.includes("Cannot find context")
+        ) {
+            console.log(
+                "♻️ A página do WhatsApp recarregou durante a inicialização."
+            );
+
+            console.log(
+                "🔄 Tentando iniciar novamente em 5 segundos..."
+            );
+
+            setTimeout(() => {
+                iniciarClienteWhatsApp();
+            }, 5000);
+
+            return;
+        }
+
+        console.error(erro?.stack || erro);
+    }
+}
+
+iniciarClienteWhatsApp();
+
+let falhasConsecutivasWhatsApp = 0;
+let verificandoEstadoWhatsApp = false;
+
+setInterval(async () => {
+    if (verificandoEstadoWhatsApp) {
+        console.log(
+            "⚠ Verificação anterior do WhatsApp ainda não terminou."
+        );
+        return;
+    }
+
+    verificandoEstadoWhatsApp = true;
+
+    try {
+        const state = await client.getState();
+
+        if (state === "CONNECTED") {
+            falhasConsecutivasWhatsApp = 0;
+            return;
+        }
+
+        falhasConsecutivasWhatsApp++;
+
+        console.warn(
+            `⚠ Estado do WhatsApp: ${state || "desconhecido"}. ` +
+            `Falha ${falhasConsecutivasWhatsApp}/3.`
+        );
+
+    } catch (erro) {
+        falhasConsecutivasWhatsApp++;
+
+        console.error(
+            `❌ Erro ao verificar o estado ` +
+            `(${falhasConsecutivasWhatsApp}/3):`,
+            erro?.message || erro
+        );
+
+    } finally {
+        verificandoEstadoWhatsApp = false;
+    }
+
+    if (falhasConsecutivasWhatsApp >= 3) {
+        console.error(
+            "♻️ Puppeteer não está respondendo. Reiniciando o serviço."
+        );
+
+        process.exit(1);
+    }
+}, 60000);
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.get("/painel", (req, res) => {
+res.send(`
+<html>
+<head>
+<title>Painel de Disparo</title>
+<style>
+body{font-family:Arial;background:#f4f6f9;padding:40px}
+.container{max-width:600px;background:white;padding:30px;border-radius:8px}
+textarea{width:100%;height:150px;font-size:16px}
+button{padding:12px 20px;background:#27ae60;color:white;border:none;font-size:16px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>📢 Disparo em Massa</h2>
+<form method="POST" action="/disparo" enctype="multipart/form-data">
+<textarea name="mensagem" placeholder="Digite a mensagem aqui"></textarea>
+<br><br>
+<input type="file" name="imagem" accept="image/*">
+<br><br>
+<button type="submit">Enviar para todos</button>
+</form>
+</div>
+</body>
+</html>
+`);
+});
+
+app.post("/disparo", upload.single("imagem"), async (req, res) => {
+    const mensagem = req.body.mensagem;
+
+    let caminhoImagem = null;
+
+    if (req.file) {
+        caminhoImagem = req.file.path;
+    }
+
+    enviarMensagemEmMassa(mensagem, caminhoImagem);
+
+    res.send("🚀 Disparo iniciado!");
+});
+
+app.get("/excluidas", async (req, res) => {
+    try {
+        const [rows] = await db.execute(`
+            SELECT * FROM mensagens_excluidas
+            ORDER BY data_exclusao DESC
+        `);
+
+        let html = `
+        <html>
+        <head>
+            <title>Painel - Mensagens Excluídas</title>
+            <style>
+                body { font-family: Arial; background:#f4f6f9; padding:20px; }
+                h1 { color:#333; }
+                table { width:100%; border-collapse: collapse; background:#fff; }
+                th, td { padding:10px; border:1px solid #ddd; font-size:14px; }
+                th { background:#2c3e50; color:white; }
+                tr:nth-child(even){ background:#f2f2f2; }
+                .cliente { color:#2980b9; font-weight:bold; }
+                .atendente { color:#27ae60; font-weight:bold; }
+                .msg { max-width:400px; word-wrap:break-word; }
+            </style>
+        </head>
+        <body>
+            <h1>📋 Mensagens Excluídas</h1>
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>Atendente</th>
+                    <th>Cliente</th>
+                    <th>Mensagem</th>
+                    <th>Data Envio</th>
+                    <th>Data Exclusão</th>
+                </tr>
+        `;
+
+        rows.forEach(row => {
+			const dataEnvio = new Date(row.data_envio).toLocaleString("pt-BR", {
+			timeZone: "America/Sao_Paulo"
+			});
+
+			const dataExclusao = new Date(row.data_exclusao).toLocaleString("pt-BR", {
+			timeZone: "America/Sao_Paulo"
+			});
+            html += `
+            <tr>
+                <td>${row.id}</td>
+				<td>${row.numero_atendente}</td>
+				<td>${row.numero_cliente}</td>
+                <td>${row.body}</td>
+				<td>${dataEnvio}</td>
+				<td>${dataExclusao}</td>
+
+            </tr>
+            `;
+        });
+
+        html += `
+            </table>
+        </body>
+        </html>
+        `;
+
+        res.send(html);
+    } catch (error) {
+        res.send("Erro ao carregar painel: " + error.message);
+    }
+});
+
+app.post('/enviar-pedido', async (req, res) => {
+  try {
+    const tokenRecebido = req.headers['x-coutech-token'];
+    const tokenCorreto = process.env.SEGREDO_CUPONS;
+
+    if (!tokenCorreto || tokenRecebido !== tokenCorreto) {
+      return res.status(401).json({
+        sucesso: false,
+        erro: 'Não autorizado'
+      });
+    }
+
+    const {
+      pedido,
+      telefone,
+      cliente,
+	  atendente,
+	  endereco,
+	  cidade,
+      produtos,
+      valorProdutos,
+      desconto,
+      total,
+      formaPagamento,
+      coleta
+    } = req.body;
+
+    if (!pedido) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Número do pedido não informado'
+      });
+    }
+
+    if (!telefone) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Telefone do cliente não informado'
+      });
+    }
+
+    if (!client.info) {
+      return res.status(503).json({
+        sucesso: false,
+        erro: 'WhatsApp ainda não está conectado'
+      });
+    }
+
+    const numero = normalizarTelefoneBrasil(telefone);
+
+    const numeroWhatsApp = await client.getNumberId(numero);
+
+    if (!numeroWhatsApp) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: `O número ${telefone} não foi encontrado no WhatsApp`
+      });
+    }
+
+	const mensagem = montarMensagemPedido({
+	  pedido,
+	  cliente,
+	  atendente,
+	  endereco,
+	  cidade,
+	  produtos,
+	  valorProdutos,
+	  desconto,
+	  total,
+	  formaPagamento,
+	  coleta
+	});
+
+await client.sendMessage(
+  numeroWhatsApp._serialized,
+  mensagem
+);
+
+let saldoEnviado = false;
+
+try {
+  const telefoneConta =
+    normalizarTelefoneConta(telefone);
+
+  const [clientesConta] = await db.execute(
+    `
+    SELECT
+      c.id,
+      c.nome,
+      c.ativo,
+      COALESCE(SUM(m.valor), 0) AS saldo
+    FROM clientes_conta_prazo c
+    LEFT JOIN movimentacoes_conta_prazo m
+      ON m.cliente_id = c.id
+    WHERE c.telefone = ?
+      AND c.ativo = 1
+    GROUP BY
+      c.id,
+      c.nome,
+      c.ativo
+    LIMIT 1
+    `,
+    [telefoneConta]
+  );
+
+  /*
+   * Só envia o saldo quando o cliente estiver
+   * cadastrado e ativo na conta a prazo.
+   */
+  if (clientesConta.length > 0) {
+    const clienteConta = clientesConta[0];
+
+    const saldoAtual =
+      Number(clienteConta.saldo || 0);
+
+    const mensagemSaldo =
+      `💳 *SALDO DA CONTA:*\n\n` +
+      `Saldo atual: *R$ ${formatarValorConta(saldoAtual)}*`;
+
+    await client.sendMessage(
+      numeroWhatsApp._serialized,
+      mensagemSaldo
+    );
+
+    saldoEnviado = true;
+
+    console.log(
+      `💳 Saldo de R$ ` +
+      `${formatarValorConta(saldoAtual)} ` +
+      `enviado para ${clienteConta.nome}.`
+    );
+  }
+} catch (erroSaldo) {
+  /*
+   * Um erro ao consultar o saldo não desfazz
+   * o envio da mensagem principal do pedido.
+   */
+  console.error(
+    `⚠️ Pedido ${pedido} foi enviado, mas não foi ` +
+    `possível enviar o saldo:`,
+    erroSaldo.message
+  );
+}
+
+return res.json({
+  sucesso: true,
+  pedido,
+  telefone: numero,
+  saldoEnviado
+});
+
+  } catch (erro) {
+    console.error(
+      '❌ Erro na rota /enviar-pedido:',
+      erro
+    );
+
+    return res.status(500).json({
+      sucesso: false,
+      erro: erro.message
+    });
+  }
+});
+
+app.post('/enviar-saldo', async (req, res) => {
+  try {
+
+    const tokenRecebido =
+      req.headers['x-coutech-token'];
+
+    const tokenCorreto =
+      process.env.SEGREDO_CUPONS;
+
+    if (!tokenCorreto || tokenRecebido !== tokenCorreto) {
+      return res.status(401).json({
+        sucesso: false,
+        erro: 'Não autorizado'
+      });
+    }
+
+    const {
+      telefone,
+      cliente,
+      valorPagamento,
+      formaPagamento,
+      saldo
+    } = req.body;
+
+    if (!telefone) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Telefone não informado'
+      });
+    }
+
+        await enviarSaldoWhatsApp({
+      telefone,
+      cliente,
+      valorPagamento,
+      formaPagamento,
+      saldo
+    });
+
+    return res.json({
+      sucesso: true
+    });
+
+  } catch (erro) {
+
+    console.error(
+      '❌ Erro na rota /enviar-saldo:',
+      erro
+    );
+
+    return res.status(500).json({
+      sucesso: false,
+      erro: erro.message
+    });
+
+  }
+});
+
+app.post('/conta-prazo/registrar-pedido', async (req, res) => {
+        let conexao;
+
+        try {
+            const tokenRecebido =
+                req.headers['x-coutech-token'];
+
+            const tokenCorreto =
+                process.env.SEGREDO_CUPONS;
+
+            if (
+                !tokenCorreto ||
+                tokenRecebido !== tokenCorreto
+            ) {
+                return res.status(401).json({
+                    sucesso: false,
+                    erro: 'Não autorizado'
+                });
+            }
+
+            const {
+                pedido,
+                cliente,
+                telefone,
+                valor,
+                formaPagamento,
+                operador
+            } = req.body || {};
+
+            const numeroPedido =
+                String(pedido || '').trim();
+
+            const telefoneNormalizado =
+                normalizarTelefoneConta(telefone);
+
+            const valorPedido =
+                converterValorConta(valor);
+
+            if (!numeroPedido) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Número do pedido não informado'
+                });
+            }
+
+            if (!telefoneNormalizado) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Telefone não informado'
+                });
+            }
+
+            if (
+                !Number.isFinite(valorPedido) ||
+                valorPedido <= 0
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Valor do pedido inválido'
+                });
+            }
+
+            conexao = await db.getConnection();
+
+            await conexao.beginTransaction();
+
+            /*
+             * Localiza o cliente e bloqueia temporariamente
+             * essa linha durante a transação.
+             */
+            const [clientes] = await conexao.execute(
+                `
+                SELECT
+                    id,
+                    nome,
+                    telefone,
+                    ativo,
+                    limite
+                FROM clientes_conta_prazo
+                WHERE telefone = ?
+                LIMIT 1
+                FOR UPDATE
+                `,
+                [telefoneNormalizado]
+            );
+
+            if (clientes.length === 0) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Cliente não autorizado'
+                });
+            }
+
+            const clienteAutorizado = clientes[0];
+
+            if (!clienteAutorizado.ativo) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Cliente desativado',
+                    cliente: clienteAutorizado.nome
+                });
+            }
+
+            /*
+             * Verifica antecipadamente se o pedido já existe.
+             * A chave UNIQUE do banco também protege contra
+             * concorrência entre vários computadores.
+             */
+            const [pedidosExistentes] =
+                await conexao.execute(
+                    `
+                    SELECT id
+                    FROM movimentacoes_conta_prazo
+                    WHERE pedido = ?
+                      AND tipo = 'COMPRA'
+                    LIMIT 1
+                    `,
+                    [numeroPedido]
+                );
+
+            if (pedidosExistentes.length > 0) {
+                await conexao.rollback();
+
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Pedido já registrado',
+                    cliente: clienteAutorizado.nome
+                });
+            }
+
+            const [resultadoSaldo] =
+                await conexao.execute(
+                    `
+                    SELECT
+                        COALESCE(SUM(valor), 0) AS saldo
+                    FROM movimentacoes_conta_prazo
+                    WHERE cliente_id = ?
+                    `,
+                    [clienteAutorizado.id]
+                );
+
+            const saldoAnterior =
+                Number(resultadoSaldo[0].saldo || 0);
+
+            const novoSaldo =
+                saldoAnterior + valorPedido;
+
+            await conexao.execute(
+                `
+                INSERT INTO movimentacoes_conta_prazo (
+                    cliente_id,
+                    tipo,
+                    pedido,
+                    valor,
+                    forma,
+                    observacao,
+                    operador
+                ) VALUES (
+                    ?,
+                    'COMPRA',
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+                `,
+                [
+                    clienteAutorizado.id,
+                    numeroPedido,
+                    valorPedido,
+                    formaPagamento || 'Conta a prazo',
+                    `Pedido do GestãoClick - ${
+                        cliente || clienteAutorizado.nome
+                    }`,
+                    operador || null
+                ]
+            );
+
+            await conexao.commit();
+
+            console.log(
+                `💳 Conta a prazo: pedido ${numeroPedido} ` +
+                `registrado para ${clienteAutorizado.nome}. ` +
+                `Novo saldo: R$ ${formatarValorConta(novoSaldo)}`
+            );
+
+            return res.status(200).json({
+                sucesso: true,
+                registrado: true,
+                cliente: clienteAutorizado.nome,
+                telefone: clienteAutorizado.telefone,
+                pedido: numeroPedido,
+                valor:
+                    formatarValorConta(valorPedido),
+                saldoAnterior:
+                    formatarValorConta(saldoAnterior),
+                saldoAtual:
+                    formatarValorConta(novoSaldo)
+            });
+
+        } catch (erro) {
+            if (conexao) {
+                try {
+                    await conexao.rollback();
+                } catch {}
+            }
+
+            /*
+             * A chave UNIQUE também pode detectar uma tentativa
+             * simultânea de registrar o mesmo pedido.
+             */
+            if (erro.code === 'ER_DUP_ENTRY') {
+                return res.status(200).json({
+                    sucesso: true,
+                    registrado: false,
+                    motivo: 'Pedido já registrado'
+                });
+            }
+
+            console.error(
+                '❌ Erro ao registrar conta a prazo:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro:
+                    erro.message ||
+                    'Erro interno ao registrar conta a prazo'
+            });
+
+        } finally {
+            if (conexao) {
+                conexao.release();
+            }
+        }
+    }
+);
+
+app.get('/conta-prazo/saldo/:telefone', async (req, res) => {
+        try {
+            const tokenRecebido =
+                req.headers['x-coutech-token'];
+
+            const tokenCorreto =
+                process.env.SEGREDO_CUPONS;
+
+            if (
+                !tokenCorreto ||
+                tokenRecebido !== tokenCorreto
+            ) {
+                return res.status(401).json({
+                    sucesso: false,
+                    erro: 'Não autorizado'
+                });
+            }
+
+            const telefone =
+                normalizarTelefoneConta(
+                    req.params.telefone
+                );
+
+            const [resultado] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.telefone = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite
+                LIMIT 1
+                `,
+                [telefone]
+            );
+
+            if (resultado.length === 0) {
+                return res.status(404).json({
+                    sucesso: false,
+                    erro: 'Cliente não encontrado'
+                });
+            }
+
+            const cliente = resultado[0];
+
+            return res.json({
+                sucesso: true,
+                cliente: cliente.nome,
+                telefone: cliente.telefone,
+                ativo: Boolean(cliente.ativo),
+                saldo:
+                    formatarValorConta(cliente.saldo),
+                limite:
+                    cliente.limite === null
+                        ? null
+                        : formatarValorConta(
+                            cliente.limite
+                        )
+            });
+
+        } catch (erro) {
+            console.error(
+                '❌ Erro ao consultar saldo:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.get('/financeiro', async (req, res) => {
+    try {
+        const mensagem = String(req.query.mensagem || '');
+        const tipo = String(req.query.tipo || 'sucesso');
+
+        const [clientes] = await db.execute(`
+            SELECT
+                c.id,
+                c.nome,
+                c.telefone,
+                c.ativo,
+                c.limite,
+                c.criado_em,
+                COALESCE(SUM(m.valor), 0) AS saldo
+            FROM clientes_conta_prazo c
+            LEFT JOIN movimentacoes_conta_prazo m
+                ON m.cliente_id = c.id
+            GROUP BY
+                c.id,
+                c.nome,
+                c.telefone,
+                c.ativo,
+                c.limite,
+                c.criado_em
+            ORDER BY c.nome
+        `);
+
+        let linhasClientes = '';
+		let montanteTotal = 0;
+
+        for (const cliente of clientes) {
+            const saldo = Number(cliente.saldo || 0);
+			montanteTotal += saldo;
+
+            const classeSaldo =
+                saldo > 0
+                    ? 'saldo-devedor'
+                    : 'saldo-zerado';
+
+            linhasClientes += `
+                <tr>
+                    <td>
+                        ${escaparHtml(cliente.nome)}
+                    </td>
+
+                    <td>
+                        ${escaparHtml(cliente.telefone)}
+                    </td>
+
+                    <td class="${classeSaldo}">
+                        R$ ${formatarValorConta(saldo)}
+                    </td>
+
+                    <td>
+                        ${
+                            cliente.ativo
+                                ? '<span class="status ativo">Ativo</span>'
+                                : '<span class="status inativo">Inativo</span>'
+                        }
+                    </td>
+
+                    <td class="acoes">
+                        <a
+                            class="botao azul"
+                            href="/financeiro/extrato/${cliente.id}"
+                        >
+                            Ver extrato
+                        </a>
+
+                        ${
+                            saldo > 0 && cliente.ativo
+                                ? `
+                                    <a
+                                        class="botao verde"
+                                        href="/financeiro/pagamento/${cliente.id}"
+                                    >
+                                        Registrar pagamento
+                                    </a>
+                                `
+                                : ''
+                        }
+                    </td>
+                </tr>
+            `;
+        }
+
+        res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Contas a Prazo</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px;
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1250px;
+            margin: auto;
+        }
+
+        .topo {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        h1, h2 {
+            margin-top: 0;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+        }
+
+        .grade {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #ccd1d7;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+
+        button, .botao {
+            display: inline-block;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 14px;
+            text-decoration: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: white;
+        }
+
+        .verde {
+            background: #198754;
+        }
+
+        .azul {
+            background: #0d6efd;
+        }
+
+        .vermelho {
+            background: #dc3545;
+        }
+
+        .cinza {
+            background: #6c757d;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 9px;
+            border-bottom: 1px solid #e1e5e9;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        th {
+            background: #263544;
+            color: white;
+        }
+
+        .acoes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .form-inline {
+            display: inline;
+            margin: 0;
+        }
+
+        .status {
+            padding: 5px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status.ativo {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .status.inativo {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        .saldo-devedor {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .saldo-zerado {
+            color: #198754;
+            font-weight: bold;
+        }
+
+        .alerta {
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .alerta.sucesso {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .alerta.erro {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        @media (max-width: 800px) {
+            body {
+                padding: 15px;
+            }
+
+            .grade {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+            }
+
+            .topo {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+		
+		.montante-total {
+			display: flex;
+			justify-content: flex-end;
+			align-items: center;
+			gap: 15px;
+			margin-top: 22px;
+			padding: 18px;
+			border-radius: 8px;
+			background: #263544;
+			color: white;
+			font-size: 20px;
+		}
+
+		.montante-total strong {
+			color: #5ee89c;
+			font-size: 25px;
+		}
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="topo">
+            <div>
+                <h1>💳 Contas a Prazo</h1>
+                <div>
+                    Cadastro, saldos, extratos e pagamentos.
+                </div>
+            </div>
+        </div>
+
+        ${
+            mensagem
+                ? mensagemPainel(mensagem, tipo)
+                : ''
+        }
+
+        <div class="card">
+            <h2>Clientes cadastrados</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cliente</th>
+                        <th>Telefone</th>
+                        <th>Saldo</th>
+                        <th>Situação</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    ${
+                        linhasClientes ||
+                        `
+                            <tr>
+                                <td colspan="6">
+                                    Nenhum cliente cadastrado.
+                                </td>
+                            </tr>
+                        `
+                    }
+                </tbody>
+            </table>
+			<div class="montante-total">
+				<span>Montante total a receber:</span>
+
+				<strong>
+					R$ ${formatarValorConta(montanteTotal)}
+				</strong>
+			</div>
+        </div>
+    </div>
+</body>
+</html>
+        `);
+
+    } catch (erro) {
+        console.error(
+            '❌ Erro ao abrir painel de contas:',
+            erro
+        );
+
+        res.status(500).send(
+            `Erro ao abrir painel: ${escaparHtml(erro.message)}`
+        );
+    }
+});
+
+app.post('/financeiro/clientes', async (req, res) => {
+    try {
+        const nome =
+            String(req.body.nome || '').trim();
+
+        const telefone =
+            normalizarTelefoneConta(req.body.telefone);
+
+        if (!nome) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent('Informe o nome do cliente.')
+            );
+        }
+
+        if (!telefone) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent('Informe um telefone válido.')
+            );
+        }
+
+        return res.redirect(
+            '/financeiro?mensagem=' +
+            encodeURIComponent(
+                'Cliente cadastrado com sucesso.'
+            )
+        );
+
+    } catch (erro) {
+        if (erro.code === 'ER_DUP_ENTRY') {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent(
+                    'Já existe um cliente cadastrado com esse telefone.'
+                )
+            );
+        }
+
+        console.error(
+            '❌ Erro ao cadastrar cliente:',
+            erro
+        );
+
+        return res.redirect(
+            '/financeiro?tipo=erro&mensagem=' +
+            encodeURIComponent(erro.message)
+        );
+    }
+});
+
+app.post('/financeiro/clientes/:id/status', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            const ativo =
+                Number(req.body.ativo) === 1 ? 1 : 0;
+
+            if (!Number.isInteger(id) || id <= 0) {
+                throw new Error('Cliente inválido.');
+            }
+
+            const [resultado] = await db.execute(
+                `
+                UPDATE clientes_conta_prazo
+                SET ativo = ?
+                WHERE id = ?
+                `,
+                [ativo, id]
+            );
+
+            if (resultado.affectedRows === 0) {
+                throw new Error('Cliente não encontrado.');
+            }
+
+            return res.redirect(
+                '/financeiro?mensagem=' +
+                encodeURIComponent(
+                    ativo
+                        ? 'Cliente ativado com sucesso.'
+                        : 'Cliente desativado com sucesso.'
+                )
+            );
+
+        } catch (erro) {
+            return res.redirect(
+                '/financeiro?tipo=erro&mensagem=' +
+                encodeURIComponent(erro.message)
+            );
+        }
+    }
+);
+
+app.get('/financeiro/pagamento/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+			if (!Number.isInteger(id) || id <= 0) {
+				return res.status(400).send(
+					'Identificador do cliente inválido.'
+				);
+			}			
+
+            const [clientes] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.id = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo
+                LIMIT 1
+                `,
+                [id]
+            );
+
+            if (clientes.length === 0) {
+                return res.status(404).send(
+                    'Cliente não encontrado.'
+                );
+            }
+
+            const cliente = clientes[0];
+            const saldo = Number(cliente.saldo || 0);
+
+            res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Registrar pagamento</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            padding: 30px;
+        }
+
+        .card {
+            max-width: 600px;
+            margin: auto;
+            background: white;
+            padding: 28px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 11px;
+            margin-top: 6px;
+            margin-bottom: 16px;
+            border: 1px solid #ccd1d7;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        button, a {
+            display: inline-block;
+            padding: 11px 16px;
+            border: none;
+            border-radius: 6px;
+            text-decoration: none;
+            color: white;
+            cursor: pointer;
+        }
+
+        button {
+            background: #198754;
+        }
+
+        a {
+            background: #6c757d;
+        }
+
+        .saldo {
+            padding: 15px;
+            background: #fff3cd;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>Registrar pagamento</h1>
+
+        <p>
+            <strong>Cliente:</strong>
+            ${escaparHtml(cliente.nome)}
+        </p>
+
+        <p>
+            <strong>Telefone:</strong>
+            ${escaparHtml(cliente.telefone)}
+        </p>
+
+        <div class="saldo">
+            Saldo atual:
+            R$ ${formatarValorConta(saldo)}
+        </div>
+
+        <form
+            method="POST"
+            action="/financeiro/pagamentos"
+        >
+            <input
+                type="hidden"
+                name="cliente_id"
+                value="${cliente.id}"
+            >
+
+            <label>Valor pago</label>
+
+            <input
+                type="text"
+                name="valor"
+                placeholder="Ex.: 100,00"
+                required
+            >
+
+            <label>Forma de pagamento</label>
+
+            <select name="forma" required>
+                <option value="Pix">Pix</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Devolução de Mercadorias">Devolução de Mercadorias</option>
+            </select>
+
+            <label>Observação</label>
+
+            <textarea
+                name="observacao"
+                rows="3"
+                placeholder="Ex.: Pagamento parcial"
+            ></textarea>
+
+            <button type="submit">
+                Confirmar pagamento
+            </button>
+
+            <a href="/financeiro">
+                Cancelar
+            </a>
+        </form>
+		<script>
+		(function () {
+			const formulario = document.querySelector(
+				'form[action="/financeiro/pagamentos"]'
+			);
+
+			if (!formulario) return;
+
+			const forma = formulario.querySelector('[name="forma"]');
+			const observacao = formulario.querySelector('[name="observacao"]');
+
+			function atualizarObservacao() {
+				const devolucao =
+					forma.value === 'Devolução de Mercadorias';
+
+				observacao.required = devolucao;
+
+				observacao.placeholder = devolucao
+					? 'Obrigatório: informe as peças devolvidas.'
+					: 'Ex.: Pagamento parcial';
+
+				observacao.setCustomValidity(
+					devolucao && !observacao.value.trim()
+						? 'Preencha a observação da devolução de mercadorias.'
+						: ''
+				);
+			}
+
+			forma.addEventListener('change', atualizarObservacao);
+			observacao.addEventListener('input', atualizarObservacao);
+
+			atualizarObservacao();
+		})();
+		</script>
+    </div>
+</body>
+</html>
+            `);
+
+        } catch (erro) {
+            res.status(500).send(
+                `Erro: ${escaparHtml(erro.message)}`
+            );
+        }
+    }
+);
+
+app.post('/financeiro/pagamentos', async (req, res) => {
+    let conexao;
+
+    try {
+        const clienteId =
+            Number(req.body.cliente_id);
+
+        const valorPagamento =
+            converterValorConta(req.body.valor);
+
+        const forma =
+            String(req.body.forma || '').trim();
+
+        const observacaoInformada =
+			String(req.body.observacao || '').trim();
+
+		if (
+			forma === 'Devolução de Mercadorias' &&
+			!observacaoInformada
+		) {
+			return res.status(400).send(`
+				<h2>Informe a observação da devolução de mercadorias.</h2>
+				<p>Descreva quais peças foram devolvidas e o motivo.</p>
+				<button type="button" onclick="history.back()">
+					Voltar ao formulário
+				</button>
+			`);
+		}
+
+		const observacao =
+			observacaoInformada || 'Pagamento parcial';
+
+        if (
+            !Number.isInteger(clienteId) ||
+            clienteId <= 0
+        ) {
+            throw new Error('Cliente inválido.');
+        }
+
+        if (
+            !Number.isFinite(valorPagamento) ||
+            valorPagamento <= 0
+        ) {
+            throw new Error(
+                'Informe um valor de pagamento válido.'
+            );
+        }
+
+        if (!forma) {
+            throw new Error(
+                'Informe a forma de pagamento.'
+            );
+        }
+
+        conexao = await db.getConnection();
+
+        await conexao.beginTransaction();
+
+        const [clientes] = await conexao.execute(
+            `
+            SELECT
+                id,
+                nome,
+                telefone,
+                ativo
+            FROM clientes_conta_prazo
+            WHERE id = ?
+            LIMIT 1
+            FOR UPDATE
+            `,
+            [clienteId]
+        );
+
+        if (clientes.length === 0) {
+            throw new Error('Cliente não encontrado.');
+        }
+
+        const cliente = clientes[0];
+
+        const [resultadoSaldo] =
+            await conexao.execute(
+                `
+                SELECT
+                    COALESCE(SUM(valor), 0) AS saldo
+                FROM movimentacoes_conta_prazo
+                WHERE cliente_id = ?
+                `,
+                [clienteId]
+            );
+
+        const saldoAtual =
+            Number(resultadoSaldo[0].saldo || 0);
+
+        if (saldoAtual <= 0) {
+            throw new Error(
+                'Este cliente não possui saldo em aberto.'
+            );
+        }
+
+        if (valorPagamento > saldoAtual) {
+            throw new Error(
+                `O pagamento é maior que o saldo atual de ` +
+                `R$ ${formatarValorConta(saldoAtual)}.`
+            );
+        }
+
+        await conexao.execute(
+            `
+            INSERT INTO movimentacoes_conta_prazo (
+                cliente_id,
+                tipo,
+                pedido,
+                valor,
+                forma,
+                observacao,
+                operador
+            ) VALUES (
+                ?,
+                'PAGAMENTO',
+                NULL,
+                ?,
+                ?,
+                ?,
+                ?
+            )
+            `,
+            [
+                clienteId,
+                -valorPagamento,
+                forma,
+                observacao || 'Pagamento parcial',
+                'Painel Railway'
+            ]
+        );
+
+        await conexao.commit();
+
+        const novoSaldo =
+            saldoAtual - valorPagamento;
+
+        console.log(
+            `💵 Pagamento de R$ ` +
+            `${formatarValorConta(valorPagamento)} ` +
+            `registrado para ${cliente.nome}.`
+        );
+		
+				try {
+		 await enviarSaldoWhatsApp({
+			telefone: cliente.telefone,
+			cliente: cliente.nome,
+			valorPagamento: formatarValorConta(valorPagamento),
+			formaPagamento: forma,
+			saldo: formatarValorConta(novoSaldo),
+			observacao
+		});
+
+		} catch (erroWhatsApp) {
+		  /*
+		   * O pagamento já foi registrado no banco.
+		   * Uma falha no WhatsApp não deve desfazer a baixa.
+		   */
+		  console.error(
+			`⚠️ Pagamento registrado para ${cliente.nome}, ` +
+			`mas a mensagem não foi enviada:`,
+			erroWhatsApp.message
+		  );
+		}
+
+        return res.redirect(
+            `/financeiro/extrato/${clienteId}` +
+            `?mensagem=` +
+            encodeURIComponent(
+                `Pagamento de R$ ` +
+                `${formatarValorConta(valorPagamento)} ` +
+                `registrado. Novo saldo: R$ ` +
+                `${formatarValorConta(novoSaldo)}.`
+            )
+        );
+
+    } catch (erro) {
+        if (conexao) {
+            try {
+                await conexao.rollback();
+            } catch {}
+        }
+
+        console.error(
+            '❌ Erro ao registrar pagamento:',
+            erro
+        );
+
+        const clienteId =
+            Number(req.body.cliente_id);
+
+        return res.redirect(
+            `/financeiro/extrato/${clienteId}` +
+            `?tipo=erro&mensagem=` +
+            encodeURIComponent(erro.message)
+        );
+
+    } finally {
+        if (conexao) {
+            conexao.release();
+        }
+    }
+});
+
+app.get('/financeiro/extrato/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+			if (!Number.isInteger(id) || id <= 0) {
+				return res.status(400).send(
+					'Identificador do cliente inválido.'
+				);
+			}
+
+            const mensagem =
+                String(req.query.mensagem || '');
+
+            const tipo =
+                String(req.query.tipo || 'sucesso');
+
+            const [clientes] = await db.execute(
+                `
+                SELECT
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite,
+                    COALESCE(SUM(m.valor), 0) AS saldo
+                FROM clientes_conta_prazo c
+                LEFT JOIN movimentacoes_conta_prazo m
+                    ON m.cliente_id = c.id
+                WHERE c.id = ?
+                GROUP BY
+                    c.id,
+                    c.nome,
+                    c.telefone,
+                    c.ativo,
+                    c.limite
+                LIMIT 1
+                `,
+                [id]
+            );
+
+            if (clientes.length === 0) {
+                return res.status(404).send(
+                    'Cliente não encontrado.'
+                );
+            }
+
+            const cliente = clientes[0];
+
+            const [movimentacoes] = await db.execute(
+                `
+                SELECT
+                    id,
+                    tipo,
+                    pedido,
+                    valor,
+                    forma,
+                    observacao,
+                    operador,
+                    criado_em
+                FROM movimentacoes_conta_prazo
+                WHERE cliente_id = ?
+                ORDER BY criado_em DESC, id DESC
+                `,
+                [id]
+            );
+
+            let linhas = '';
+
+            for (const movimentacao of movimentacoes) {
+                const valor =
+                    Number(movimentacao.valor || 0);
+
+                const classeValor =
+                    valor >= 0
+                        ? 'compra'
+                        : 'pagamento';
+
+                linhas += `
+                    <tr>
+                        <td>
+                            ${formatarDataBrasil(
+                                movimentacao.criado_em
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(movimentacao.tipo)}
+                        </td>
+
+                        <td>
+                            ${
+                                movimentacao.pedido
+                                    ? escaparHtml(
+                                        movimentacao.pedido
+                                    )
+                                    : '—'
+                            }
+                        </td>
+
+                        <td class="${classeValor}">
+                            ${
+                                valor >= 0
+                                    ? '+'
+                                    : '-'
+                            }
+                            R$ ${formatarValorConta(
+                                Math.abs(valor)
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.forma || ''
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.observacao || ''
+                            )}
+                        </td>
+
+                        <td>
+                            ${escaparHtml(
+                                movimentacao.operador || ''
+                            )}
+                        </td>
+                    </tr>
+                `;
+            }
+
+            res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Extrato</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            padding: 30px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 22px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        .saldo {
+            font-size: 26px;
+            font-weight: bold;
+            color: #dc3545;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 11px;
+            border-bottom: 1px solid #e1e5e9;
+            text-align: left;
+        }
+
+        th {
+            background: #263544;
+            color: white;
+        }
+
+        .compra {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .pagamento {
+            color: #198754;
+            font-weight: bold;
+        }
+
+        .botao {
+            display: inline-block;
+            padding: 11px 15px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: white;
+            margin-right: 6px;
+        }
+
+        .verde {
+            background: #198754;
+        }
+
+        .cinza {
+            background: #6c757d;
+        }
+
+        .alerta {
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .alerta.sucesso {
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+
+        .alerta.erro {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        @media (max-width: 800px) {
+            body {
+                padding: 15px;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        ${
+            mensagem
+                ? mensagemPainel(mensagem, tipo)
+                : ''
+        }
+
+        <div class="card">
+            <h1>
+                Extrato — ${escaparHtml(cliente.nome)}
+            </h1>
+
+            <p>
+                Telefone:
+                ${escaparHtml(cliente.telefone)}
+            </p>
+
+            <p class="saldo">
+                Saldo atual:
+                R$ ${formatarValorConta(cliente.saldo)}
+            </p>
+
+            ${
+                Number(cliente.saldo) > 0 &&
+                cliente.ativo
+                    ? `
+                        <a
+                            class="botao verde"
+                            href="/financeiro/pagamento/${cliente.id}"
+                        >
+                            Registrar pagamento
+                        </a>
+                    `
+                    : ''
+            }
+
+            <a
+                class="botao cinza"
+                href="/financeiro"
+            >
+                Voltar
+            </a>
+        </div>
+
+        <div class="card">
+            <h2>Movimentações</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Tipo</th>
+                        <th>Pedido</th>
+                        <th>Valor</th>
+                        <th>Forma</th>
+                        <th>Observação</th>
+                        <th>Operador</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    ${
+                        linhas ||
+                        `
+                            <tr>
+                                <td colspan="7">
+                                    Nenhuma movimentação registrada.
+                                </td>
+                            </tr>
+                        `
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+            `);
+
+        } catch (erro) {
+            console.error(
+                '❌ Erro ao consultar extrato:',
+                erro
+            );
+
+            res.status(500).send(
+                `Erro: ${escaparHtml(erro.message)}`
+            );
+        }
+    }
+);
+
+// ======================================================
+// ROTAS DE ENTREGA — COUTECH CELL
+// ======================================================
+
+const HORARIOS_ENTREGA = [
+    '09:30',
+    '11:00',
+    '14:00',
+    '16:30'
+];
+
+// Proteção dos formulários.
+// Após reiniciar o bot, recarregue páginas que estavam abertas.
+const csrfEntregas =
+    cryptoEntregas.randomBytes(32).toString('hex');
+
+// ======================================================
+// BANCO DE DADOS
+// ======================================================
+
+let tabelaEntregasPronta = null;
+
+function prepararTabelaEntregas() {
+    if (!tabelaEntregasPronta) {
+        tabelaEntregasPronta = db.execute(`
+            CREATE TABLE IF NOT EXISTS entregas_motoboy (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                data_rota DATE NOT NULL,
+                horario_rota VARCHAR(5) NOT NULL,
+                motoboy VARCHAR(100) NOT NULL,
+                codigo_acesso CHAR(36) NOT NULL,
+                pedido VARCHAR(50) NULL,
+                cliente VARCHAR(150) NOT NULL,
+                telefone VARCHAR(30) NULL,
+                endereco VARCHAR(255) NOT NULL,
+                cidade VARCHAR(100) NULL,
+                total DECIMAL(10,2) NOT NULL DEFAULT 0,
+
+                status_entrega ENUM(
+                    'pendente',
+                    'entregue',
+                    'nao_entregue'
+                ) NOT NULL DEFAULT 'pendente',
+
+                forma_pagamento ENUM(
+                    'pendente',
+                    'pix',
+                    'dinheiro'
+                ) NOT NULL DEFAULT 'pendente',
+
+                atualizado_em DATETIME NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP,
+
+                criado_em DATETIME NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                INDEX idx_entregas_rota (
+                    data_rota,
+                    horario_rota,
+                    motoboy
+                ),
+
+                INDEX idx_entregas_codigo (
+                    codigo_acesso
+                )
+            )
+        `).catch(erro => {
+            tabelaEntregasPronta = null;
+            throw erro;
+        });
+    }
+
+    return tabelaEntregasPronta;
+}
+
+// Prepara a tabela antes de atender às páginas de entregas.
+app.use('/entregas', async (req, res, next) => {
+    res.set({
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Frame-Options': 'DENY'
+    });
+
+    try {
+        await prepararTabelaEntregas();
+		await prepararColunaDinheiro();
+		await prepararColunaColeta();
+		await prepararColunaPixAtendente();
+		await prepararColunaPixParcial();
+		await prepararPrazoEntregas();
+		next();
+    } catch (erro) {
+        console.error(
+            'Erro ao preparar tabela de entregas:',
+            erro
+        );
+
+        res.status(503).send(
+            'Não foi possível acessar as entregas. Tente novamente.'
+        );
+    }
+});
+
+// ======================================================
+// FUNÇÕES AUXILIARES
+// ======================================================
+
+function hojeEntregas() {
+    return DateTime.now()
+        .setZone('America/Sao_Paulo')
+        .toFormat('yyyy-LL-dd');
+}
+
+function dataValidaEntregas(valor) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(valor || ''))) {
+        return false;
+    }
+
+    return DateTime.fromISO(valor).isValid;
+}
+
+function moedaEntregas(valor) {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL'
+    });
+}
+
+function centavosEntregas(valor) {
+    const texto = String(valor ?? '').trim();
+
+    // Aceita: 55, 55,90, 55.90 e 1.255,90.
+    if (
+        !/^(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?$/.test(texto) &&
+        !/^\d+\.\d{1,2}$/.test(texto)
+    ) {
+        return null;
+    }
+
+    const normalizado = texto.includes(',')
+        ? texto.replace(/\./g, '').replace(',', '.')
+        : texto;
+
+    const centavos = Math.round(Number(normalizado) * 100);
+
+    if (
+        !Number.isSafeInteger(centavos) ||
+        centavos < 0 ||
+        centavos > 9999999999
+    ) {
+        return null;
+    }
+
+    return centavos;
+}
+
+function textoEntrega(valor, limite) {
+    return String(valor ?? '').trim().slice(0, limite);
+}
+
+function statusEntregaTexto(status) {
+    return {
+        pendente: 'Pendente',
+        entregue: 'Entregue',
+        nao_entregue: 'Não entregue'
+    }[status] || status;
+}
+
+function pagamentoEntregaTexto(pagamento) {
+    return {
+        pendente: 'Não informado',
+        pix: 'PIX informado',
+        dinheiro: 'Dinheiro',
+		conta_prazo: 'Conta a prazo'
+    }[pagamento] || pagamento;
+}
+
+function csrfEntregaCampo() {
+    return `
+        <input
+            type="hidden"
+            name="csrf"
+            value="${csrfEntregas}"
+        >
+    `;
+}
+
+function validarFormularioEntrega(req, res, next) {
+    if (req.body?.csrf !== csrfEntregas) {
+        return res.status(403).send(
+            'Página expirada. Volte, atualize a página e tente novamente.'
+        );
+    }
+
+    next();
+}
+
+// Login do administrador.
+// Não coloca sua senha no endereço da página.
+function autenticarEntregas(req, res, next) {
+    const senhaConfigurada = process.env.SENHA_EXCLUSAO_ENTREGAS;
+
+    if (!senhaConfigurada) {
+        return res.status(503).send(
+            'Configure SENHA_ENTREGAS no Railway e reinicie o bot.'
+        );
+    }
+
+    const autorizacao = req.headers.authorization || '';
+    let usuario = '';
+    let senha = '';
+
+    if (autorizacao.startsWith('Basic ')) {
+        const dados = Buffer.from(
+            autorizacao.slice(6),
+            'base64'
+        ).toString('utf8');
+
+        const separador = dados.indexOf(':');
+
+        if (separador >= 0) {
+            usuario = dados.slice(0, separador);
+            senha = dados.slice(separador + 1);
+        }
+    }
+
+    const recebida = cryptoEntregas
+        .createHash('sha256')
+        .update(senha)
+        .digest();
+
+    const correta = cryptoEntregas
+        .createHash('sha256')
+        .update(senhaConfigurada)
+        .digest();
+
+    if (
+        usuario !== 'admin' ||
+        !cryptoEntregas.timingSafeEqual(recebida, correta)
+    ) {
+        res.set(
+            'WWW-Authenticate',
+            'Basic realm="Entregas Coutech", charset="UTF-8"'
+        );
+
+        return res.status(401).send('Acesso restrito.');
+    }
+
+    next();
+}
+
+// ======================================================
+// APARÊNCIA DAS PÁGINAS
+// ======================================================
+
+function paginaEntregas(titulo, conteudo) {
+    return `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>${escaparHtml(titulo)}</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 16px;
+            background: #111;
+            color: #eee;
+            font-family: Arial, sans-serif;
+        }
+
+        main {
+            max-width: 1100px;
+            margin: auto;
+        }
+
+        h1, h2 {
+            margin-top: 0;
+        }
+
+        section, article {
+            background: #222;
+            padding: 18px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input, select, button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        input, select {
+            border: 1px solid #555;
+            background: #303030;
+            color: white;
+        }
+
+        button {
+            border: 0;
+            background: #e5b700;
+            color: #111;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            filter: brightness(1.1);
+        }
+
+        form.grade {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+        }
+
+        .inteira {
+            grid-column: 1 / -1;
+        }
+
+        .tabela {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #444;
+        }
+
+        a {
+            color: #f1c40f;
+        }
+
+        .pix {
+            background: #21c7a5;
+        }
+
+        .dinheiro {
+            background: #e5b700;
+        }
+
+        .cinza {
+            background: #555;
+            color: white;
+        }
+
+        .botoes {
+            display: grid;
+            gap: 10px;
+        }
+
+        article {
+            border-left: 5px solid #777;
+        }
+
+        article.entregue {
+            border-color: #2ecc71;
+        }
+
+        article.nao_entregue {
+            border-color: #e74c3c;
+        }
+
+        .aviso {
+            color: #ccc;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 700px) {
+            form.grade {
+                grid-template-columns: 1fr;
+            }
+        }
+		
+		/* Impede o conteúdo de ultrapassar o cartão */
+		article {
+			min-width: 0;
+			overflow-wrap: anywhere;
+		}
+
+		article form.botoes {
+			width: 100%;
+			min-width: 0;
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		article form.botoes > * {
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		article input,
+		article button {
+			box-sizing: border-box;
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		article button {
+			white-space: normal;
+			overflow-wrap: anywhere;
+		}
+
+		/* Ajustes para celular */
+		@media (max-width: 600px) {
+			article {
+				padding: 14px;
+			}
+
+			article h2 {
+				font-size: 20px;
+				line-height: 1.3;
+			}
+
+			article p {
+				font-size: 15px;
+				line-height: 1.4;
+			}
+
+			article button {
+				font-size: 15px;
+				min-height: 44px;
+			}
+
+			article input {
+				font-size: 16px;
+			}
+		}
+    </style>
+</head>
+<body>
+    <main>
+        <h1>${escaparHtml(titulo)}</h1>
+        ${conteudo}
+    </main>
+</body>
+</html>
+    `;
+}
+
+// ======================================================
+// PAINEL DA LOJA
+// ======================================================
+
+// =====================================================
+// INTEGRAÇÃO ENTREGAS → GESTÃOCLICK
+// =====================================================
+
+function gcCentavos(valor) {
+    const numero = Number(valor);
+
+    if (!Number.isFinite(numero) || numero < 0) {
+        throw new Error('Valor financeiro inválido.');
+    }
+
+    return Math.round(numero * 100);
+}
+
+function gcNome(valor) {
+    return String(valor || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function gcConfiguracao() {
+    const nomes = [
+        'GESTAOCLICK_ACCESS_TOKEN',
+        'GESTAOCLICK_SECRET_ACCESS_TOKEN',
+        'GESTAOCLICK_LOJA_ID',
+        'GESTAOCLICK_FORMA_DINHEIRO_ID',
+        'GESTAOCLICK_FORMA_PIX_ID',
+        'GESTAOCLICK_CONTA_BANCARIA_ID'
+    ];
+
+    const configuracao = {};
+
+    for (const nome of nomes) {
+        const valor = String(process.env[nome] || '').trim();
+
+        if (!valor || /[\x00-\x1F\x7F]/.test(valor)) {
+            throw new Error(`Verifique a variável ${nome} no Railway.`);
+        }
+
+        configuracao[nome] = valor;
+    }
+
+    return configuracao;
+}
+
+// Uma requisição por vez, com intervalo entre chamadas.
+let gcFila = Promise.resolve();
+
+function gcApi(metodo, caminho, parametros = {}, corpo) {
+    const executar = async () => {
+        try {
+            const config = gcConfiguracao();
+
+            const resposta = await require('axios').request({
+                method: metodo,
+                baseURL: 'https://api.gestaoclick.com/api',
+                url: caminho,
+                params: parametros,
+                data: corpo,
+                timeout: 30000,
+                maxRedirects: 0,
+                headers: {
+                    'access-token': config.GESTAOCLICK_ACCESS_TOKEN,
+                    'secret-access-token':
+                        config.GESTAOCLICK_SECRET_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const resultado = resposta.data;
+
+            if (
+                resultado?.status !== 'success' ||
+                Number(resultado?.code || 200) >= 400
+            ) {
+                throw new Error('Resposta de erro do GestãoClick.');
+            }
+
+            return resultado;
+        } catch (erro) {
+            // Não imprime o objeto Axios: ele contém as chaves.
+            const status = erro.response?.status;
+
+            throw new Error(
+                status
+                    ? `GestãoClick retornou HTTP ${status}.`
+                    : 'Não foi possível concluir a consulta ao GestãoClick.'
+            );
+        } finally {
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+    };
+
+    const tarefa = gcFila.then(executar, executar);
+    gcFila = tarefa.catch(() => {});
+    return tarefa;
+}
+
+function gcPeriodoRecebimentos(venda) {
+    const hoje = require('luxon').DateTime
+        .now()
+        .setZone('America/Sao_Paulo')
+        .toISODate();
+
+    const datas = [
+        hoje,
+        venda.data,
+        ...(venda.pagamentos || []).map(item =>
+            item.pagamento?.data_vencimento
+        )
+    ]
+        .map(valor => String(valor || '').slice(0, 10))
+        .filter(valor => /^\d{4}-\d{2}-\d{2}$/.test(valor));
+
+    const anos = datas.map(data => Number(data.slice(0, 4)));
+
+    return {
+        data_inicio: Math.min(...anos) + '-01-01',
+        data_fim: (Math.max(...anos) + 1) + '-12-31'
+    };
+}
+
+async function gcListar(caminho, parametros) {
+    const registros = [];
+
+    for (let pagina = 1; pagina <= 100; pagina++) {
+        const resposta = await gcApi('GET', caminho, {
+            ...parametros,
+            pagina,
+            limite: 100
+        });
+
+        if (!Array.isArray(resposta.data)) {
+            throw new Error('Lista inesperada retornada pelo GestãoClick.');
+        }
+
+        registros.push(...resposta.data);
+
+        const paginas = Number(resposta.meta?.total_paginas);
+
+        if (
+            (Number.isFinite(paginas) && pagina >= paginas) ||
+            (!Number.isFinite(paginas) && resposta.data.length < 100)
+        ) {
+            return registros;
+        }
+    }
+
+    throw new Error('Consulta muito extensa. Confira no GestãoClick.');
+}
+
+function gcPagamento(entrega) {
+    if (
+        entrega.total !== null &&
+        entrega.total !== undefined &&
+        Number(entrega.total) === 0
+    ) {
+        if (entrega.status_entrega !== 'entregue') {
+            throw new Error(
+                'O motoboy precisa confirmar a troca antes da baixa.'
+            );
+        }
+
+        const valores = [
+            entrega.valor_recebido_pix ?? 0,
+            entrega.valor_recebido_dinheiro ?? 0,
+            entrega.dinheiro_conta_prazo ?? 0
+        ].map(gcCentavos);
+
+        if (valores.some(valor => valor !== 0)) {
+            throw new Error(
+                'Esta troca tem valores recebidos. Confira no GestãoClick.'
+            );
+        }
+
+        return {
+            total: 0,
+            totalRecebido: 0,
+            saldo: 0,
+            excedente: 0,
+            parcial: false,
+            modo: 'Troca'
+        };
+    }
+
+    if (
+        entrega.forma_pagamento === 'conta_prazo' ||
+        Number(entrega.cliente_conta_prazo_id) > 0 ||
+        Number(entrega.dinheiro_conta_prazo) > 0
+    ) {
+        throw new Error('Conta a prazo: conferir e baixar manualmente.');
+    }
+
+    if (entrega.status_entrega !== 'entregue') {
+        throw new Error('A entrega precisa estar marcada como entregue.');
+    }
+
+    const total = gcCentavos(entrega.total);
+
+    if (!Number.isSafeInteger(total) || total <= 0) {
+        throw new Error('O total do pedido é inválido.');
+    }
+
+    let pix = 0;
+    let dinheiro = 0;
+
+    if (entrega.forma_pagamento === 'pix') {
+        // Botão de pagamento integral no PIX.
+        pix = total;
+    } else if (entrega.forma_pagamento === 'dinheiro') {
+        // Campos de valores informados pelo motoboy, inclusive misto.
+        pix = gcCentavos(entrega.valor_recebido_pix ?? 0);
+        dinheiro = gcCentavos(
+            entrega.valor_recebido_dinheiro ?? entrega.total
+        );
+    } else {
+        throw new Error('Pagamento ainda não informado.');
+    }
+
+    const totalRecebido = pix + dinheiro;
+
+    if (
+        !Number.isSafeInteger(pix) ||
+        !Number.isSafeInteger(dinheiro) ||
+        !Number.isSafeInteger(totalRecebido) ||
+        pix < 0 ||
+        dinheiro < 0 ||
+        totalRecebido <= 0
+    ) {
+        throw new Error(
+            'Informe um valor recebido maior que zero para realizar a baixa.'
+        );
+    }
+
+    if (totalRecebido > total && pix > 0) {
+        throw new Error(
+            'Recebimento acima do total está disponível somente ' +
+            'para pagamento integral em dinheiro.'
+        );
+    }
+
+    const pagamento = {
+        total,
+        pix,
+        dinheiro,
+        totalRecebido,
+        saldo: Math.max(total - totalRecebido, 0),
+        excedente: Math.max(totalRecebido - total, 0),
+        parcial: totalRecebido < total,
+        modo: pix > 0 && dinheiro > 0
+            ? 'PIX + Dinheiro'
+            : pix > 0
+                ? 'PIX'
+                : 'Dinheiro'
+    };
+
+    if (pagamento.parcial || pagamento.modo === 'PIX + Dinheiro') {
+        const config = gcConfiguracao();
+
+        const situacaoConfirmadoId = String(
+            process.env.GESTAOCLICK_SITUACAO_CONFIRMADO_ID || ''
+        ).trim();
+
+        if (!/^\d+$/.test(situacaoConfirmadoId)) {
+            throw new Error(
+                'Configure GESTAOCLICK_SITUACAO_CONFIRMADO_ID no Railway.'
+            );
+        }
+
+        if (
+            config.GESTAOCLICK_FORMA_PIX_ID ===
+            config.GESTAOCLICK_FORMA_DINHEIRO_ID
+        ) {
+            throw new Error('PIX e Dinheiro precisam ter IDs diferentes.');
+        }
+
+        pagamento.formaPixId = config.GESTAOCLICK_FORMA_PIX_ID;
+        pagamento.formaDinheiroId = config.GESTAOCLICK_FORMA_DINHEIRO_ID;
+        pagamento.situacaoConfirmadoId = situacaoConfirmadoId;
+    }
+
+    return pagamento;
+}
+
+// Histórico persistente: impede repetir uma tentativa de baixa
+// cujo resultado ficou incerto.
+async function gcPrepararHistorico() {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS entregas_gc_baixas (
+            recebimento_id VARCHAR(40) NOT NULL PRIMARY KEY,
+            entrega_id BIGINT NOT NULL,
+            venda_id VARCHAR(40) NOT NULL,
+            forma VARCHAR(20) NOT NULL,
+            valor_centavos BIGINT NOT NULL,
+            status VARCHAR(30) NOT NULL,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP
+        )
+    `);
+}
+
+async function gcEntrega(id) {
+    if (!/^\d+$/.test(String(id))) {
+        throw new Error('Entrega inválida.');
+    }
+
+    const [registros] = await db.execute(
+        'SELECT * FROM entregas_motoboy WHERE id = ?',
+        [id]
+    );
+
+    if (registros.length !== 1) {
+        throw new Error('Entrega não encontrada.');
+    }
+
+    return registros[0];
+}
+
+async function gcConferir(id) {
+    const entrega = await gcEntrega(id);
+    const pagamento = gcPagamento(entrega);
+    const config = gcConfiguracao();
+
+    const codigo = String(entrega.pedido || '').trim();
+
+    if (!/^\d+$/.test(codigo)) {
+        throw new Error('O pedido precisa ter um único número de venda.');
+    }
+
+    const vendas = (await gcListar('/vendas', {
+        codigo,
+        loja_id: config.GESTAOCLICK_LOJA_ID,
+        tipo: 'vendas_balcao'
+    })).filter(venda => String(venda.codigo) === codigo);
+
+    if (vendas.length !== 1) {
+        throw new Error('Venda não encontrada ou resultado ambíguo.');
+    }
+
+    const venda = vendas[0];
+
+    if (
+        !venda.id ||
+        !venda.cliente_id ||
+        gcNome(venda.nome_cliente) !== gcNome(entrega.cliente) ||
+        gcCentavos(venda.valor_total) !== pagamento.total
+    ) {
+        throw new Error(
+            'Cliente ou valor do painel não corresponde à venda. ' +
+            'Confira no GestãoClick.'
+        );
+    }
+
+    if (
+        venda.loja_id &&
+        String(venda.loja_id) !== config.GESTAOCLICK_LOJA_ID
+    ) {
+        throw new Error('A venda pertence a outra loja.');
+    }
+
+    // Consulta também recebimentos já pagos para evitar duplicidade.
+    const recebimentos = await gcListar('/recebimentos', {
+		loja_id: config.GESTAOCLICK_LOJA_ID,
+		cliente_id: venda.cliente_id,
+		...gcPeriodoRecebimentos(venda)
+	});
+
+    const encontrados = recebimentos.filter(recebimento => {
+        const referencia = String(recebimento.descricao || '')
+            .trim()
+            .match(/^Venda de n[º°o]\s*(\d+)$/i);
+
+        return (
+            referencia?.[1] === codigo &&
+            String(recebimento.cliente_id) === String(venda.cliente_id) &&
+            String(recebimento.loja_id) === config.GESTAOCLICK_LOJA_ID
+        );
+    });
+
+    if (encontrados.length !== 1) {
+        throw new Error(
+            'Não foi encontrado um único recebimento para esta venda. ' +
+            'Vendas parceladas ou referências diferentes exigem conferência manual.'
+        );
+    }
+
+    const recebimento = encontrados[0];
+
+    if (
+        gcCentavos(recebimento.valor) !== pagamento.total ||
+        gcCentavos(recebimento.valor_total) !== pagamento.total ||
+        ['juros', 'desconto', 'taxa_banco', 'taxa_operadora']
+            .some(campo => gcCentavos(recebimento[campo] ?? 0) !== 0)
+    ) {
+        throw new Error(
+            'Recebimento com valor diferente, juros, descontos ou taxas. ' +
+            'Confira no GestãoClick.'
+        );
+    }
+
+    let formaId;
+
+	if (pagamento.modo === 'Troca') {
+		if (!String(recebimento.forma_pagamento_id || '').trim()) {
+			throw new Error(
+				'O recebimento não possui forma de pagamento. ' +
+				'Confira no GestãoClick.'
+			);
+		}
+
+		if (
+			String(recebimento.conta_bancaria_id) !==
+			config.GESTAOCLICK_CONTA_BANCARIA_ID
+		) {
+			throw new Error(
+				'A conta do recebimento difere da conta configurada. ' +
+				'Confira no GestãoClick.'
+			);
+		}
+
+		const formaDevolucaoId = String(
+			process.env.GESTAOCLICK_FORMA_DEVOLUCAO_ID || ''
+		).trim();
+
+		if (!/^\d+$/.test(formaDevolucaoId)) {
+			throw new Error(
+				'Configure GESTAOCLICK_FORMA_DEVOLUCAO_ID no Railway ' +
+				'com o ID de Devolução de Mercadorias desta loja.'
+			);
+		}
+
+		formaId = formaDevolucaoId;
+	} else {
+		formaId = pagamento.modo === 'PIX'
+			? config.GESTAOCLICK_FORMA_PIX_ID
+			: config.GESTAOCLICK_FORMA_DINHEIRO_ID;
+	}
+
+    return { entrega, pagamento, venda, recebimento, formaId, config };
+}
+
+function gcValorTelaCentavos(valor) {
+    const texto = String(valor ?? '').trim();
+
+    // Valores da tela: 80,00 ou 1.280,00.
+    if (!/^(?:\d+|\d{1,3}(?:\.\d{3})+),\d{2}$/.test(texto)) {
+        throw new Error('Formato de valor inesperado na tela do GestãoClick.');
+    }
+
+    const centavos = Number(texto.replace(/\./g, '').replace(',', ''));
+
+    if (!Number.isSafeInteger(centavos)) {
+        throw new Error('Valor inválido no GestãoClick.');
+    }
+
+    return centavos;
+}
+
+function gcValorTela(centavos) {
+    return (
+        Math.floor(centavos / 100) +
+        ',' +
+        String(centavos % 100).padStart(2, '0')
+    );
+}
+
+async function gcApiTela(metodo, recebimentoId, corpo) {
+    if (!/^\d+$/.test(String(recebimentoId))) {
+        throw new Error('ID de recebimento inválido.');
+    }
+
+    const token = String(
+        process.env.GESTAOCLICK_X_TOKEN_AUTH || ''
+    ).trim();
+
+    if (!token || /[\x00-\x1F\x7F]/.test(token)) {
+        throw new Error(
+            'Configure ou atualize GESTAOCLICK_X_TOKEN_AUTH no Railway.'
+        );
+    }
+
+    let resposta;
+
+    try {
+        resposta = await require('axios').request({
+            method: metodo,
+            url:
+                'https://erp.api.click.app/financeiro/' +
+                'movimentacoes_financeiras/editar_recebimento/' +
+                encodeURIComponent(recebimentoId),
+            data: corpo,
+            timeout: 30000,
+            maxRedirects: 0,
+            headers: {
+                'x-token-auth': token,
+                Accept: 'application/json',
+                'Content-Type': 'application/json'
+            }
+        });
+    } catch (erro) {
+        // Não repassa o objeto Axios: ele contém o token.
+        const status = Number(erro.response?.status);
+		
+		if ([301, 302, 303, 307, 308].includes(status)) {
+			const destino = erro.response?.headers?.location;
+			let destinoSeguro = 'Não informado';
+
+			if (destino) {
+				try {
+					const url = new URL(
+						destino,
+						'https://erp.api.click.app'
+					);
+
+					// Não registra parâmetros que possam conter dados de sessão.
+					destinoSeguro = url.origin + url.pathname;
+				} catch {
+					destinoSeguro = 'Endereço não reconhecido';
+				}
+			}
+
+			console.error('Redirecionamento do GestãoClick:', {
+				metodo,
+				recebimentoId,
+				status,
+				destino: destinoSeguro
+			});
+
+			throw new Error(
+				'O GestãoClick redirecionou a solicitação. ' +
+				'Confira o destino no log para verificar se a sessão expirou.'
+			);
+		}
+
+        if (status === 401 || status === 403) {
+            throw new Error(
+                'Acesso à tela do GestãoClick recusado. ' +
+                'Confira o token e as permissões do usuário.'
+            );
+        }
+
+        throw new Error(
+            'Falha na comunicação com a tela do GestãoClick' +
+            (status ? ` (HTTP ${status}).` : '.')
+        );
+    }
+
+    let resultado = resposta.data;
+
+    if (typeof resultado === 'string') {
+        try {
+            resultado = JSON.parse(resultado);
+        } catch {
+            throw new Error(
+                'O GestãoClick não retornou JSON. Confira o token da tela.'
+            );
+        }
+    }
+
+    if (
+        resultado?.status !== 'success' ||
+        Number(resultado?.code || 200) >= 400
+    ) {
+        throw new Error(
+            'A tela do GestãoClick não confirmou sucesso. ' +
+            'Confira o token e o recebimento.'
+        );
+    }
+
+    return resultado;
+}
+
+function gcParcelasEsperadas(dados) {
+    const p = dados.pagamento;
+    const parcelas = [];
+
+    if (p.dinheiro > 0) {
+        parcelas.push({
+            valor: p.dinheiro,
+            forma: String(p.formaDinheiroId),
+            liquidado: '1'
+        });
+    }
+
+    if (p.pix > 0) {
+        parcelas.push({
+            valor: p.pix,
+            forma: String(p.formaPixId),
+            liquidado: '1'
+        });
+    }
+
+    if (p.parcial) {
+        parcelas.push({
+            valor: p.saldo,
+            forma: String(dados.recebimento.forma_pagamento_id || ''),
+            liquidado: '0'
+        });
+    }
+
+    const soma = parcelas.reduce((total, parcela) => {
+        if (
+            !Number.isSafeInteger(parcela.valor) ||
+            parcela.valor <= 0 ||
+            !/^\d+$/.test(parcela.forma)
+        ) {
+            throw new Error('Dados inválidos para gerar as parcelas.');
+        }
+
+        return total + parcela.valor;
+    }, 0);
+
+    if (parcelas.length < 2 || soma !== p.total) {
+        throw new Error(
+            'A soma das parcelas precisa corresponder ao total da venda.'
+        );
+    }
+
+    return parcelas;
+}
+
+async function gcPrepararPagamentoMisto(dados) {
+    const { recebimento: r, venda, pagamento: p, config } = dados;
+
+    if (String(r.liquidado) !== '0') {
+        throw new Error('O recebimento precisa estar em aberto.');
+    }
+
+    const resposta = await gcApiTela('GET', String(r.id));
+
+    let registro = resposta.data?.['request.data'];
+
+    if (typeof registro === 'string') {
+        try {
+            registro = JSON.parse(registro);
+        } catch {
+            throw new Error('Dados de edição inválidos no GestãoClick.');
+        }
+    }
+
+    if (!registro || typeof registro !== 'object') {
+        throw new Error('O GestãoClick não retornou os dados de edição.');
+    }
+
+    // Copia os dados retornados para preservar os vínculos originais.
+    registro = JSON.parse(JSON.stringify(registro));
+
+    const m = registro.MovimentacoesFinanceira;
+
+    const referencia = String(m?.nome || '')
+        .trim()
+        .match(/^Venda de n[º°o]\s*(\d+)$/i);
+
+    if (
+        !m ||
+        String(m.id) !== String(r.id) ||
+        String(m.loja_id) !== config.GESTAOCLICK_LOJA_ID ||
+        String(m.cliente_id) !== String(venda.cliente_id) ||
+        String(m.pedido_id) !== String(venda.id) ||
+        referencia?.[1] !== String(venda.codigo) ||
+        String(m.baixado) !== '0' ||
+        String(m.tipo) !== 'C' ||
+        String(m.conta_bancaria_id) !==
+            config.GESTAOCLICK_CONTA_BANCARIA_ID ||
+        String(m.categoria_id) !== String(r.plano_contas_id) ||
+        gcValorTelaCentavos(m.valor) !== p.total ||
+        gcValorTelaCentavos(m.valor_total) !== p.total ||
+        gcValorTelaCentavos(m.juros) !== 0 ||
+        gcValorTelaCentavos(m.desconto) !== 0
+    ) {
+        throw new Error(
+            'Os dados da tela diferem do recebimento conferido. ' +
+            'Nenhum parcelamento foi enviado.'
+        );
+    }
+
+    const existentes = registro.MovimentacoesFinanceirasParcela;
+
+    if (
+        existentes != null &&
+        (!Array.isArray(existentes) || existentes.filter(Boolean).length)
+    ) {
+        throw new Error(
+            'O recebimento já contém parcelas. Confira no GestãoClick.'
+        );
+    }
+
+	const hoje = require('luxon').DateTime
+		.now()
+		.setZone('America/Sao_Paulo')
+		.toFormat('dd/MM/yyyy');
+
+	const esperadas = gcParcelasEsperadas(dados);
+	const situacaoAberta = String(m.situacao_id || '');
+
+	if (
+		p.parcial &&
+		(
+			!/^\d+$/.test(situacaoAberta) ||
+			situacaoAberta === p.situacaoConfirmadoId ||
+			!m.data_vencimento
+		)
+	) {
+		throw new Error(
+			'Não foi possível identificar a situação ou o vencimento do saldo em aberto.'
+		);
+	}
+
+	Object.assign(m, {
+		ocorrencia: 'P',
+		tipo_parcela: 'D',
+		repeticao: 'M',
+		quantidade: String(esperadas.length),
+		data_primeira_parcela: hoje,
+		intervalo_dias: ''
+	});
+
+	registro.MovimentacoesFinanceirasParcela = esperadas.map(
+		(parcela, indice) => {
+			const recebida = parcela.liquidado === '1';
+
+			const nomeForma = !recebida
+				? String(m.nome_forma_pagamento || '')
+				: parcela.forma === p.formaPixId
+					? 'Pix'
+					: 'Dinheiro';
+
+			return {
+				chave: 0.926601 + indice / 1000000,
+				data_vencimento: recebida ? hoje : m.data_vencimento,
+				valor: gcValorTela(parcela.valor),
+				forma_pagamento_id: parcela.forma,
+				nome_forma_pagamento: nomeForma,
+				conta_bancaria_id: config.GESTAOCLICK_CONTA_BANCARIA_ID,
+				nome_conta_bancaria: String(m.nome_conta_bancaria || ''),
+				situacao_id: recebida
+					? p.situacaoConfirmadoId
+					: situacaoAberta,
+				baixado: recebida ? 1 : 0,
+				observacoes: recebida
+					? 'Pagamento recebido na conferência da entrega.'
+					: 'Saldo restante da venda ' + venda.codigo +
+					  '. Ainda não recebido.'
+			};
+		}
+	);
+
+	return { data: registro };
+}
+
+async function gcVerificarPagamentoMisto(dados) {
+    const { config, venda, pagamento: p, recebimento } = dados;
+
+    const registros = await gcListar('/recebimentos', {
+		loja_id: config.GESTAOCLICK_LOJA_ID,
+		cliente_id: venda.cliente_id,
+		...gcPeriodoRecebimentos(venda)
+	});
+
+    const parcelas = registros.filter(r => {
+        const referencia = String(r.descricao || '').trim().match(
+            /^Venda de n[º°o]\s*(\d+)(?:\s*\(\s*\d+\s*\/\s*\d+\s*\))?$/i
+        );
+
+        return (
+            referencia?.[1] === String(venda.codigo) &&
+            String(r.cliente_id) === String(venda.cliente_id) &&
+            String(r.loja_id) === config.GESTAOCLICK_LOJA_ID
+        );
+    });
+
+    const faltantes = gcParcelasEsperadas(dados);
+
+    if (
+        parcelas.length !== faltantes.length ||
+        new Set(parcelas.map(r => String(r.id))).size !== parcelas.length ||
+        !parcelas.some(r => String(r.id) === String(recebimento.id))
+    ) {
+        throw new Error(
+            'Não foi possível identificar exatamente as parcelas esperadas.'
+        );
+    }
+
+    for (const r of parcelas) {
+        if (
+            String(r.conta_bancaria_id) !==
+                config.GESTAOCLICK_CONTA_BANCARIA_ID ||
+            String(r.plano_contas_id) !==
+                String(recebimento.plano_contas_id) ||
+            ['juros', 'desconto', 'taxa_banco', 'taxa_operadora']
+                .some(campo => gcCentavos(r[campo] ?? 0) !== 0)
+        ) {
+            throw new Error(
+                'Uma parcela retornou com conta, categoria ou encargos diferentes.'
+            );
+        }
+
+        const indice = faltantes.findIndex(esperada =>
+            String(r.forma_pagamento_id) === esperada.forma &&
+            String(r.liquidado) === esperada.liquidado &&
+            gcCentavos(r.valor) === esperada.valor &&
+            gcCentavos(r.valor_total) === esperada.valor
+        );
+
+        if (indice < 0) {
+            throw new Error(
+                'Os valores ou as situações das parcelas não correspondem ao envio.'
+            );
+        }
+
+        faltantes.splice(indice, 1);
+    }
+
+    if (faltantes.length) {
+        throw new Error('Faltam parcelas na verificação do pagamento.');
+    }
+
+    const consultaVenda = await gcApi(
+        'GET',
+        `/vendas/${encodeURIComponent(venda.id)}`,
+        {
+            loja_id: config.GESTAOCLICK_LOJA_ID,
+            tipo: 'vendas_balcao'
+        }
+    );
+
+    if (
+        String(consultaVenda.data?.id) !== String(venda.id) ||
+        gcCentavos(consultaVenda.data?.valor_total) !== p.total
+    ) {
+        throw new Error(
+            'Não foi possível confirmar a preservação do valor original da venda.'
+        );
+    }
+}
+
+function gcAssinatura(dados) {
+    // Assina os dados apresentados para detectar alterações
+    // entre a tela de conferência e o clique de confirmação.
+    return require('crypto')
+        .createHmac(
+            'sha256',
+            gcConfiguracao().GESTAOCLICK_SECRET_ACCESS_TOKEN
+        )
+        .update(JSON.stringify({
+            entrega: String(dados.entrega.id),
+            pedido: String(dados.entrega.pedido),
+            cliente: dados.entrega.cliente,
+            venda: String(dados.venda.id),
+            recebimento: dados.recebimento,
+            pagamento: dados.pagamento,
+            forma: dados.formaId,
+            conta: dados.config.GESTAOCLICK_CONTA_BANCARIA_ID
+        }))
+        .digest('hex');
+}
+
+function gcPagina(res, mensagem, conteudo = '') {
+    return res.send(paginaEntregas('Pagamento no GestãoClick', `
+        <section>
+            <h2>${escaparHtml(mensagem)}</h2>
+            ${conteudo}
+            <p>
+				<a
+					href="/entregas/painel"
+					onclick="
+						if (window.history.length > 1) {
+							event.preventDefault();
+							window.history.back();
+						}
+					"
+				>
+					Voltar à página anterior
+				</a>
+			</p>
+        </section>
+    `));
+}
+
+app.get(
+    '/entregas/:id/gestaoclick',
+    autenticarEntregas,
+    async (req, res) => {
+        try {
+            await gcPrepararHistorico();
+            const dados = await gcConferir(req.params.id);
+            const r = dados.recebimento;
+
+            if (String(r.liquidado) === '1') {
+                return gcPagina(
+                    res,
+                    'Este recebimento já está pago no GestãoClick.'
+                );
+            }
+
+            const [historico] = await db.execute(
+                `SELECT status FROM entregas_gc_baixas
+                 WHERE recebimento_id = ?`,
+                [String(r.id)]
+            );
+
+            if (historico.length) {
+                return gcPagina(
+                    res,
+                    'Já existe uma tentativa registrada. ' +
+                    'Confira o recebimento diretamente no GestãoClick.'
+                );
+            }
+
+            return gcPagina(res, 'Confira antes de confirmar', `
+                <p>Venda: <strong>${
+                    escaparHtml(dados.venda.codigo)
+                }</strong></p>
+
+                <p>Cliente: <strong>${
+                    escaparHtml(dados.venda.nome_cliente)
+                }</strong></p>
+
+                <p>Loja: <strong>${
+                    escaparHtml(r.nome_loja)
+                }</strong></p>
+
+                <p>Valor da venda: <strong>${
+					moedaEntregas(dados.pagamento.total / 100)
+				}</strong></p>
+
+				<p>Valor recebido: <strong>${
+					moedaEntregas(
+						(dados.pagamento.totalRecebido ?? dados.pagamento.total) / 100
+					)
+				}</strong></p>
+
+				${dados.pagamento.excedente > 0 ? `
+					<p style="color: #f59e0b; font-weight: bold;">
+						Recebido a mais:
+						${moedaEntregas(dados.pagamento.excedente / 100)}.
+						Compensar manualmente como desconto na próxima compra.
+					</p>
+				` : ''}
+
+                <p>Forma: <strong>${
+                    dados.pagamento.modo
+                }</strong></p>
+				
+                ${dados.pagamento.modo === 'PIX + Dinheiro' ? `
+                    <p>
+                        PIX:
+                        <strong>${
+                            moedaEntregas(dados.pagamento.pix / 100)
+                        }</strong>
+                    </p>
+                    <p>
+                        Dinheiro:
+                        <strong>${
+                            moedaEntregas(dados.pagamento.dinheiro / 100)
+                        }</strong>
+                    </p>
+                ` : ''}
+				
+				${dados.pagamento.parcial ? `
+					<p style="color: #f59e0b; font-weight: bold;">
+						Baixa parcial:
+						${moedaEntregas(dados.pagamento.totalRecebido / 100)}
+						serão confirmados.
+					</p>
+
+					<p style="color: #f59e0b; font-weight: bold;">
+						Será criada uma parcela em aberto de
+						${moedaEntregas(dados.pagamento.saldo / 100)}.
+					</p>
+				` : ''}
+
+                <p>Confirme somente depois de conferir o dinheiro
+                ou o recebimento do PIX no banco.</p>
+
+                <form method="post"
+                      action="/entregas/${Number(dados.entrega.id)}/gestaoclick">
+                    ${csrfEntregaCampo()}
+
+                    <input type="hidden" name="assinatura"
+                           value="${gcAssinatura(dados)}">
+
+                    <button type="submit">
+                        Confirmar baixa no GestãoClick
+                    </button>
+                </form>
+            `);
+        } catch (erro) {
+            return gcPagina(res, erro.message);
+        }
+    }
+);
+
+app.post(
+    '/entregas/:id/gestaoclick',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        let tentativaRegistrada = false;
+        let recebimentoId;
+
+        try {
+            await gcPrepararHistorico();
+
+            // Refaz as consultas antes de qualquer alteração.
+            const dados = await gcConferir(req.params.id);
+            const r = dados.recebimento;
+            recebimentoId = String(r.id);
+
+            if (String(r.liquidado) === '1') {
+                return gcPagina(
+                    res,
+                    'Este recebimento já está pago no GestãoClick.'
+                );
+            }
+
+            if (String(r.liquidado) !== '0') {
+                throw new Error('Situação financeira desconhecida.');
+            }
+
+            if (req.body.assinatura !== gcAssinatura(dados)) {
+                throw new Error(
+                    'Os dados mudaram. Volte e abra novamente a conferência.'
+                );
+            }
+			
+            // Usa parcelamento para pagamento misto ou parcial.
+			const pagamentoMisto =
+				dados.pagamento.modo === 'PIX + Dinheiro' ||
+				dados.pagamento.parcial === true;
+
+            // Consulta e valida antes de registrar a tentativa.
+            // Token inválido nesta etapa não bloqueia uma futura tentativa.
+            const corpoMisto = pagamentoMisto
+                ? await gcPrepararPagamentoMisto(dados)
+                : null;
+
+            const corpo = {};
+
+            // Preserva os dados financeiros originais.
+            const campos = [
+                'descricao',
+                'data_vencimento',
+                'data_competencia',
+                'valor',
+                'valor_total',
+                'juros',
+                'desconto',
+                'plano_contas_id',
+                'centro_custo_id',
+                'entidade',
+                'cliente_id'
+            ];
+
+            for (const campo of campos) {
+                if (r[campo] !== undefined && r[campo] !== null) {
+                    corpo[campo] = String(r[campo]);
+                }
+            }
+
+            for (const campo of [
+                'descricao',
+                'data_vencimento',
+                'data_competencia',
+                'plano_contas_id'
+            ]) {
+                if (!corpo[campo]) {
+                    throw new Error(`Recebimento sem ${campo}.`);
+                }
+            }
+			
+			corpo.loja_id = dados.config.GESTAOCLICK_LOJA_ID;
+			
+			const valorBaixaCentavos =
+				dados.pagamento.totalRecebido ?? dados.pagamento.total;
+
+			corpo.valor = (valorBaixaCentavos / 100).toFixed(2);
+			corpo.valor_total = (valorBaixaCentavos / 100).toFixed(2);
+
+            corpo.forma_pagamento_id = dados.formaId;
+            corpo.conta_bancaria_id =
+                dados.config.GESTAOCLICK_CONTA_BANCARIA_ID;
+            corpo.liquidado = '1';
+            corpo.data_liquidacao = require('luxon').DateTime
+                .now()
+                .setZone('America/Sao_Paulo')
+                .toISODate();
+
+            // A chave primária impede duas baixas simultâneas
+            // deste mesmo recebimento pelo bot.
+            try {
+                await db.execute(`
+                    INSERT INTO entregas_gc_baixas
+                    (
+                        recebimento_id, entrega_id, venda_id,
+                        forma, valor_centavos, status
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'tentativa')
+                `, [
+                    recebimentoId,
+					dados.entrega.id,
+					String(dados.venda.id),
+					dados.pagamento.modo,
+					valorBaixaCentavos
+                ]);
+            } catch (erro) {
+                if (erro.code === 'ER_DUP_ENTRY') {
+                    throw new Error(
+                        'Já existe uma tentativa para este recebimento. ' +
+                        'Confira no GestãoClick antes de qualquer nova baixa.'
+                    );
+                }
+
+                throw erro;
+            }
+
+            tentativaRegistrada = true;
+
+            if (pagamentoMisto) {
+                // Um único envio. Não repete automaticamente se houver erro.
+                await gcApiTela(
+                    'POST',
+                    recebimentoId,
+                    corpoMisto
+                );
+
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // Confere as duas parcelas pela API pública.
+                await gcVerificarPagamentoMisto(dados);
+            } else {
+                await gcApi(
+                    'PUT',
+                    `/recebimentos/${encodeURIComponent(recebimentoId)}`,
+                    { loja_id: dados.config.GESTAOCLICK_LOJA_ID },
+                    corpo
+                );
+
+                const verificacao = await gcApi(
+                    'GET',
+                    `/recebimentos/${encodeURIComponent(recebimentoId)}`,
+                    { loja_id: dados.config.GESTAOCLICK_LOJA_ID }
+                );
+
+                const confirmado = verificacao.data;
+
+				if (
+					!confirmado ||
+					String(confirmado.id) !== recebimentoId ||
+					String(confirmado.liquidado) !== '1' ||
+					String(confirmado.loja_id) !==
+						dados.config.GESTAOCLICK_LOJA_ID ||
+					String(confirmado.cliente_id) !==
+						String(dados.venda.cliente_id) ||
+					String(confirmado.forma_pagamento_id) !== dados.formaId ||
+					String(confirmado.conta_bancaria_id) !==
+						dados.config.GESTAOCLICK_CONTA_BANCARIA_ID ||
+					gcCentavos(confirmado.valor) !== valorBaixaCentavos ||
+					gcCentavos(confirmado.valor_total) !== valorBaixaCentavos ||
+					['juros', 'desconto', 'taxa_banco', 'taxa_operadora']
+						.some(campo => gcCentavos(confirmado[campo] ?? 0) !== 0)
+				) {
+					throw new Error('Não foi possível verificar a baixa.');
+				}
+
+				if (dados.pagamento.excedente > 0) {
+					const consultaVenda = await gcApi(
+						'GET',
+						`/vendas/${encodeURIComponent(dados.venda.id)}`,
+						{
+							loja_id: dados.config.GESTAOCLICK_LOJA_ID,
+							tipo: 'vendas_balcao'
+						}
+					);
+
+					const vendaDepois = consultaVenda.data;
+
+					if (
+						!vendaDepois ||
+						String(vendaDepois.id) !== String(dados.venda.id) ||
+						gcCentavos(vendaDepois.valor_total) !== dados.pagamento.total
+					) {
+						throw new Error(
+							'O recebimento foi enviado, mas não foi possível confirmar ' +
+							'que o valor original da venda foi preservado. ' +
+							'Confira no GestãoClick antes de qualquer nova tentativa.'
+						);
+					}
+				}
+            }
+
+            await db.execute(`
+				UPDATE entregas_gc_baixas
+				SET status = ?
+				WHERE recebimento_id = ?
+			`, [
+				dados.pagamento.parcial ? 'parcial_confirmado' : 'confirmado',
+				recebimentoId
+			]);
+
+            const dataRetornoGC =
+				dados.entrega.data_rota instanceof Date
+					? require('luxon').DateTime
+						.fromJSDate(dados.entrega.data_rota)
+						.toISODate()
+					: String(dados.entrega.data_rota).slice(0, 10);
+
+			// Localiza o cartão do cliente, inclusive com pedidos agrupados.
+			// Uma falha nesta consulta não altera a baixa já confirmada.
+			let idCartaoRetornoGC = Number(dados.entrega.id);
+
+			try {
+				const grupoRetornoGC = await buscarGrupoConferenciaLoja(
+					dados.entrega.id
+				);
+
+				if (grupoRetornoGC?.length) {
+					idCartaoRetornoGC = Math.max(
+						...grupoRetornoGC.map(e => Number(e.id))
+					);
+				}
+			} catch (erroRetorno) {
+				console.error(
+					'Baixa confirmada, mas não foi possível localizar o cartão:',
+					erroRetorno.message
+				);
+			}
+
+			return res.redirect(
+				303,
+				'/entregas/conferencia/rota' +
+					'?data=' + encodeURIComponent(dataRetornoGC) +
+					'&horario=' + encodeURIComponent(dados.entrega.horario_rota) +
+					'&motoboy=' + encodeURIComponent(dados.entrega.motoboy) +
+					'#cliente-' + idCartaoRetornoGC
+			);
+        } catch (erro) {
+			console.error('❌ Falha na baixa GestãoClick:', {
+				entregaId: String(req.params.id),
+				recebimentoId: recebimentoId || null,
+				lojaId: process.env.GESTAOCLICK_LOJA_ID,
+				formaDinheiroId: process.env.GESTAOCLICK_FORMA_DINHEIRO_ID,
+				formaPixId: process.env.GESTAOCLICK_FORMA_PIX_ID,
+				contaBancariaId: process.env.GESTAOCLICK_CONTA_BANCARIA_ID,
+				tentativaRegistrada,
+				mensagem: erro.message
+			});
+
+			if (tentativaRegistrada) {
+                await db.execute(`
+                    UPDATE entregas_gc_baixas
+                    SET status = 'conferir'
+                    WHERE recebimento_id = ?
+                `, [recebimentoId]).catch(() => {});
+
+                return gcPagina(
+                    res,
+                    'A tentativa foi registrada, mas não foi possível ' +
+                    'confirmar o resultado. Confira no GestãoClick. ' +
+                    'O bot bloqueou uma nova tentativa para evitar repetição.'
+                );
+            }
+
+            return gcPagina(res, erro.message);
+        }
+    }
+);
+
+app.get(
+    '/entregas/painel',
+    autenticarEntregas,
+    async (req, res) => {
+        try {
+            const data = String(req.query.data || hojeEntregas());
+
+            if (!dataValidaEntregas(data)) {
+                return res.status(400).send('Data inválida.');
+            }
+
+            const [entregas] = await db.execute(`
+                SELECT *
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                ORDER BY horario_rota, motoboy, id
+            `, [data]);
+
+            const linhas = entregas.map(e => `
+                <tr>
+                    <td>${escaparHtml(e.horario_rota)}</td>
+                    <td>${escaparHtml(e.motoboy)}</td>
+                    <td>${escaparHtml(e.pedido || '—')}</td>
+                    <td>${escaparHtml(e.cliente)}</td>
+                    <td>${moedaEntregas(e.total)}</td>
+                    <td>
+                        ${escaparHtml(
+                            statusEntregaTexto(e.status_entrega)
+                        )}
+                    </td>
+                    <td>
+                        ${escaparHtml(
+                            pagamentoEntregaTexto(e.forma_pagamento)
+                        )}
+                    </td>
+                    <td>
+                        <a
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            href="/entregas/motoboy/${encodeURIComponent(e.codigo_acesso)}"
+                        >
+                            Abrir rota
+                        </a>
+                    </td>
+                </tr>
+            `).join('');
+
+            const opcoesHorarios = HORARIOS_ENTREGA.map(h => `
+                <option value="${h}">${h}</option>
+            `).join('');
+			
+			const gruposMotoboys = new Map();
+
+			for (const entrega of entregas) {
+				const codigo = entrega.codigo_acesso;
+
+				if (!gruposMotoboys.has(codigo)) {
+					gruposMotoboys.set(codigo, {
+						nome: entrega.motoboy,
+						horario: entrega.horario_rota,
+						codigo,
+						quantidade: 0
+					});
+				}
+
+				gruposMotoboys.get(codigo).quantidade++;
+			}
+
+			const rotasPorMotoboy = new Map();
+
+			for (const rota of gruposMotoboys.values()) {
+				if (!rotasPorMotoboy.has(rota.nome)) {
+					rotasPorMotoboy.set(rota.nome, []);
+				}
+
+				rotasPorMotoboy.get(rota.nome).push(rota);
+			}
+
+			const resumoMotoboys = Array.from(rotasPorMotoboy.entries())
+				.map(([nome, rotas]) => `
+					<div style="margin-bottom: 24px;">
+						<h2>${escaparHtml(nome)}</h2>
+
+						<div style="
+							display: grid;
+							grid-template-columns:
+								repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+							gap: 14px;
+						">
+							${rotas
+								.sort((a, b) => a.horario.localeCompare(b.horario))
+								.map(rota => `
+									<article style="margin: 0; min-width: 0;">
+										<h3 style="margin-top: 0;">
+											Rota ${escaparHtml(rota.horario)}
+										</h3>
+
+										<p>
+											<strong>${rota.quantidade}</strong>
+											${
+												rota.quantidade === 1
+													? 'entrega'
+													: 'entregas'
+											}
+										</p>
+
+										<div class="botoes">
+											<a
+												href="/entregas/motoboy/${encodeURIComponent(rota.codigo)}"
+												target="_blank"
+												rel="noopener noreferrer"
+											>
+												Abrir rota
+											</a>
+
+											<form
+												method="post"
+												action="/entregas/enviar-rota"
+												style="margin: 0;"
+												onsubmit="
+													const botao = this.querySelector('button');
+													botao.disabled = true;
+													botao.textContent = 'Enviando...';
+												"
+											>
+												${csrfEntregaCampo()}
+
+												<input
+													type="hidden"
+													name="codigo"
+													value="${escaparHtml(rota.codigo)}"
+												>
+
+												<button type="submit">
+													Enviar rota no WhatsApp
+												</button>
+											</form>
+										</div>
+									</article>
+								`)
+								.join('')}
+						</div>
+					</div>
+				`)
+				.join('');
+
+            res.send(paginaEntregas('Rotas de entrega', `
+                <section>
+                    <form method="get">
+                        <label>Data das entregas</label>
+						
+						<div style="
+							display: flex;
+							align-items: center;
+							flex-wrap: wrap;
+							gap: 16px;
+						">
+							<input
+								id="dataConsultaEntregas"
+								type="date"
+								name="data"
+								value="${data}"
+								required
+								style="
+									width: 220px;
+									max-width: 100%;
+									flex: 0 1 220px;
+									min-width: 0;
+								"
+							>
+
+							<span
+								id="descricaoDataEntregas"
+								style="
+									color: #f1c40f;
+									font-size: 26px;
+									font-weight: bold;
+									line-height: 1.3;
+								"
+							>
+								${DateTime.fromISO(data, { zone: 'America/Sao_Paulo' })
+									.setLocale('pt-BR')
+									.toFormat('cccc — dd/LL/yyyy')}
+							</span>
+						</div>
+ 
+                        <br><br>
+                        <button>Consultar data</button>
+                    </form>
+                </section>
+
+                <section>
+                    <h2>Adicionar entrega</h2>
+					
+					<div style="margin-bottom: 20px;">
+						<label for="textoPedidoWord">
+							Colar pedido do Word
+						</label>
+
+						<textarea
+							id="textoPedidoWord"
+							rows="3"
+							placeholder="Cole aqui o pedido completo copiado do Word..."
+							style="
+								width: 100%;
+								padding: 12px;
+								border: 1px solid #555;
+								border-radius: 8px;
+								background: #303030;
+								color: white;
+								font-family: Arial, sans-serif;
+								font-size: 16px;
+								resize: vertical;
+							"
+						></textarea>
+
+						<button
+							type="button"
+							id="preencherPedidoWord"
+							style="margin-top: 10px;"
+						>
+							Preencher dados do pedido
+						</button>
+
+						<p
+							id="resultadoLeituraWord"
+							class="aviso"
+							role="status"
+						></p>
+					</div>
+
+                    <form
+						id="formAdicionarEntrega"
+						class="grade"
+						method="post"
+						action="/entregas/painel"
+					>
+                        ${csrfEntregaCampo()}
+						
+						<input type="hidden" name="ja_pago_pix" value="0">
+						
+						<input type="hidden" name="coletar" value="">
+
+                        <input
+                            type="hidden"
+                            name="data_rota"
+                            value="${data}"
+                        >
+
+                        <div>
+                            <label>Horário</label>
+                            <select name="horario_rota">
+                                ${opcoesHorarios}
+                            </select>
+                        </div>
+
+                        <div>
+							<label>Motoboy</label>
+							<select name="motoboy" required>
+								<option value="Diogo">Diogo</option>
+								<option value="Fabricio">Fabricio</option>
+								<option value="Kaue">Kaue</option>
+							</select>
+						</div>
+
+                        <div>
+                            <label>Número do pedido</label>
+                            <input name="pedido" maxlength="50">
+                        </div>
+
+                        <div>
+                            <label>Cliente</label>
+                            <input
+                                name="cliente"
+                                maxlength="150"
+                                required
+                            >
+                        </div>
+
+                        <div>
+                            <label>Telefone</label>
+                            <input
+                                name="telefone"
+                                maxlength="30"
+                            >
+                        </div>
+
+                        <div>
+                            <label>Valor a cobrar</label>
+                            <input
+                                name="total"
+                                inputmode="decimal"
+                                placeholder="Ex.: 55,90"
+                                required
+                            >
+                        </div>
+
+                        <div class="inteira">
+                            <label>Endereço completo</label>
+                            <input
+                                name="endereco"
+                                maxlength="255"
+                                required
+                            >
+                        </div>
+
+                        <div>
+                            <label>Cidade</label>
+                            <input name="cidade" maxlength="100">
+                        </div>
+
+                        <div class="inteira">
+                            <button>Adicionar à rota</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section>
+					<h2>Rotas dos motoboys</h2>
+
+					<p class="aviso">
+						Entregas da data selecionada, separadas por motoboy e horário.
+					</p>
+
+					${resumoMotoboys || `
+						<p>Nenhuma entrega cadastrada nesta data.</p>
+					`}
+				</section>
+				
+				<script>
+				(function () {
+					const botoes = document.querySelectorAll(
+						'.copiar-link-motoboy'
+					);
+
+					botoes.forEach(function (botao) {
+						botao.addEventListener('click', async function () {
+							const link = new URL(
+								botao.dataset.caminho,
+								window.location.origin
+							).href;
+
+							try {
+								await navigator.clipboard.writeText(link);
+
+								botao.textContent = 'Link copiado! Cole no WhatsApp.';
+
+								setTimeout(function () {
+									botao.textContent = 'Copiar link para enviar';
+								}, 3000);
+							} catch (erro) {
+								window.prompt(
+									'Copie este link e envie ao motoboy:',
+									link
+								);
+							}
+						});
+					});
+				})();
+				</script>
+
+                <p>
+                    <a href="/entregas/conferencia?data=${data}">
+                        Abrir conferência desta data
+                    </a>
+                </p>
+				<script>
+				(function () {
+					const textoPedido = document.getElementById('textoPedidoWord');
+					const resultado = document.getElementById('resultadoLeituraWord');
+					const formulario = document.getElementById('formAdicionarEntrega');
+					const botaoPreencher = document.getElementById('preencherPedidoWord');
+
+					if (!textoPedido || !resultado || !formulario) {
+						return;
+					}
+
+					const horario = formulario.elements.namedItem('horario_rota');
+					const motoboy = formulario.elements.namedItem('motoboy');
+
+					// Mantém visíveis apenas horário e motoboy.
+					// Os demais campos continuam no formulário para envio ao servidor.
+					Array.from(formulario.children).forEach(function (elemento) {
+						if (
+							elemento.tagName === 'DIV' &&
+							!elemento.contains(horario) &&
+							!elemento.contains(motoboy)
+						) {
+							elemento.hidden = true;
+						}
+					});
+
+					if (botaoPreencher) {
+						botaoPreencher.hidden = true;
+					}
+
+					// Coloca horário e motoboy antes do campo de colagem.
+					const areaColagem = textoPedido.parentElement;
+
+					areaColagem.parentElement.insertBefore(
+						formulario,
+						areaColagem
+					);
+
+					formulario.style.marginBottom = '20px';
+
+					textoPedido.placeholder =
+						'Selecione horário e motoboy acima e cole um pedido aqui. ' +
+						'Ele será cadastrado automaticamente.';
+
+					resultado.textContent =
+						'Selecione horário e motoboy antes de colar. ' +
+						'Cole apenas um pedido por vez.';
+
+					// Preserva a seleção nesta aba depois do cadastro.
+					const chaveSelecao = 'coutech_selecao_entregas';
+
+					try {
+						const selecao = JSON.parse(
+							sessionStorage.getItem(chaveSelecao) || 'null'
+						);
+
+						if (selecao) {
+							const horarioExiste = Array.from(horario.options).some(
+								function (opcao) {
+									return opcao.value === selecao.horario;
+								}
+							);
+
+							if (horarioExiste) {
+								horario.value = selecao.horario;
+							}
+
+							motoboy.value = selecao.motoboy || '';
+						}
+					} catch (erro) {
+						// O cadastro continua funcionando sem armazenamento local.
+					}
+
+					function guardarSelecao() {
+						try {
+							sessionStorage.setItem(
+								chaveSelecao,
+								JSON.stringify({
+									horario: horario.value,
+									motoboy: motoboy.value.trim()
+								})
+							);
+						} catch (erro) {
+							// O cadastro continua funcionando normalmente.
+						}
+					}
+
+					let motoboyAnterior = motoboy.value.trim();
+
+					horario.addEventListener('change', guardarSelecao);
+
+					motoboy.addEventListener('change', function () {
+						const novoMotoboy = motoboy.value.trim();
+
+						if (
+							motoboyAnterior &&
+							novoMotoboy &&
+							novoMotoboy !== motoboyAnterior
+						) {
+							window.alert(
+								'Lembrete: envie o link da rota para ' +
+								motoboyAnterior +
+								' no WhatsApp antes de continuar.'
+							);
+						}
+
+						motoboyAnterior = novoMotoboy;
+						guardarSelecao();
+					});
+
+					function normalizarRotulo(texto) {
+						return texto
+							.normalize('NFD')
+							.replace(/[\\u0300-\\u036f]/g, '')
+							.toLowerCase()
+							.replace(/[^a-z0-9]/g, '');
+					}
+
+					function valorValido(texto) {
+						return (
+							/^(?:\\d+|\\d{1,3}(?:\\.\\d{3})+)(?:,\\d{1,2})?$/.test(texto) ||
+							/^\\d+\\.\\d{1,2}$/.test(texto)
+						);
+					}
+
+					let enviando = false;
+
+					// Evita envio acidental ao apertar Enter no campo motoboy.
+					formulario.addEventListener('submit', function (evento) {
+						evento.preventDefault();
+					});
+
+					textoPedido.addEventListener('paste', function (evento) {
+						evento.preventDefault();
+
+						if (enviando) {
+							return;
+						}
+
+						const texto = evento.clipboardData
+							?.getData('text/plain')
+							.replace(/\\u00a0/g, ' ')
+							.trim() || '';
+
+						textoPedido.value = texto;
+
+						if (!horario.value || !motoboy.value.trim()) {
+							resultado.textContent =
+								'Selecione o horário e informe o motoboy. ' +
+								'Depois cole o pedido novamente.';
+
+							motoboy.focus();
+							return;
+						}
+
+						if (!texto) {
+							resultado.textContent = 'Nenhum texto encontrado para colar.';
+							return;
+						}
+
+						const linhas = texto.split(/\\r\\n|\\n|\\r/);
+						const dados = {};
+						let numeroPedido = '';
+						let quantidadePedidos = 0;
+
+						for (const linhaOriginal of linhas) {
+							const linha = linhaOriginal.trim();
+
+							const pedidoEncontrado = linha.match(
+								/^Pedido\\s*(?:N[º°o.]*)?\\s*[:#-]?\\s*(\\d+)\\s*$/i
+							);
+
+							if (pedidoEncontrado) {
+								numeroPedido = pedidoEncontrado[1];
+								quantidadePedidos++;
+								continue;
+							}
+							
+							const pagamentoEncontrado = linha.match(
+								/^Est[aá]\\s+Pago\\s*[?:]\\s*(Sim|N[aã]o)\\s*$/i
+							);
+
+							if (pagamentoEncontrado) {
+								dados.estapago = pagamentoEncontrado[1];
+								continue;
+							}
+
+							const separador = linha.indexOf(':');
+
+							if (separador < 0) {
+								continue;
+							}
+
+							const rotulo = normalizarRotulo(
+								linha.slice(0, separador)
+							);
+
+							dados[rotulo] = linha.slice(separador + 1).trim();
+						}
+
+						if (quantidadePedidos !== 1) {
+							resultado.textContent =
+								'Não cadastrei: cole um único pedido completo, ' +
+								'incluindo a linha Pedido Nº.';
+							return;
+						}
+
+						const campos = {
+							pedido: numeroPedido,
+							cliente: dados.cliente || '',
+							telefone: dados.telefone || '',
+							endereco: dados.endereco || '',
+							cidade: dados.cidade || '',
+							coletar: dados.coletar || '',
+							total: (dados.total || '')
+								.replace(/^R\\$\\s*/i, '')
+								.trim()
+						};
+
+						const faltantes = [];
+
+						if (!campos.cliente) faltantes.push('cliente');
+						if (!campos.endereco) faltantes.push('endereço');
+						if (!campos.total) faltantes.push('total');
+
+						if (faltantes.length) {
+							resultado.textContent =
+								'Não cadastrei: faltam ' +
+								faltantes.join(', ') +
+								'. Corrija o texto e cole novamente.';
+							return;
+						}
+
+						if (!valorValido(campos.total)) {
+							resultado.textContent =
+								'Não cadastrei: o total está inválido. ' +
+								'Use, por exemplo, Total: R$ 100,00.';
+							return;
+						}
+
+						const situacaoPagamento = normalizarRotulo(
+							dados.estapago || ''
+						);
+
+						formulario.elements.namedItem('ja_pago_pix').value =
+							situacaoPagamento === 'sim' ? '1' : '0';
+
+						Object.entries(campos).forEach(function (entrada) {
+							formulario.elements.namedItem(entrada[0]).value =
+								entrada[1];
+						});
+
+						// Verifica os dados antes de enviar, inclusive os campos ocultos.
+						const campoInvalido = Array.from(formulario.elements).find(
+							function (campo) {
+								return campo.willValidate && !campo.validity.valid;
+							}
+						);
+
+						if (campoInvalido) {
+							resultado.textContent =
+								'Não cadastrei: confira o campo ' +
+								campoInvalido.name +
+								' no texto e cole novamente.';
+							return;
+						}
+
+						guardarSelecao();
+
+						enviando = true;
+						textoPedido.readOnly = true;
+
+						resultado.textContent =
+							'Cadastrando pedido ' + numeroPedido + '...';
+
+						// Envia para a rota de cadastro que já existe.
+						// O servidor salva e retorna ao painel atualizado.
+						HTMLFormElement.prototype.submit.call(formulario);
+					});
+				})();
+				</script>
+            `));
+        } catch (erro) {
+            console.error('Erro no painel de entregas:', erro);
+            res.status(500).send('Erro ao abrir painel de entregas.');
+        }
+    }
+);
+
+// ======================================================
+// CADASTRAR ENTREGA
+// ======================================================
+
+app.post(
+    '/entregas/painel',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const data = String(req.body.data_rota || '');
+        const horario = String(req.body.horario_rota || '');
+        const motoboy = textoEntrega(req.body.motoboy, 100);
+        const cliente = textoEntrega(req.body.cliente, 150);
+        const endereco = textoEntrega(req.body.endereco, 255);
+        const centavos = centavosEntregas(req.body.total);
+
+        if (
+            !dataValidaEntregas(data) ||
+            !HORARIOS_ENTREGA.includes(horario) ||
+            !motoboy ||
+            !cliente ||
+            !endereco ||
+            centavos === null
+        ) {
+            return res.status(400).send(
+                'Dados inválidos. Confira data, horário, motoboy, ' +
+                'cliente, endereço e valor.'
+            );
+        }
+
+        // O código é derivado da data, horário e motoboy.
+        // Assim, cadastros simultâneos da mesma rota usam o mesmo link.
+        const nomeNormalizado = motoboy
+            .normalize('NFC')
+            .toLocaleLowerCase('pt-BR');
+
+        const codigoGerado = cryptoEntregas
+            .createHmac('sha256', process.env.SENHA_ENTREGAS)
+            .update(JSON.stringify([data, horario, nomeNormalizado]))
+            .digest('hex')
+            .slice(0, 36);
+
+        try {
+            // Reutiliza também links que já tenham sido cadastrados.
+            const [existentes] = await db.execute(`
+                SELECT codigo_acesso
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                  AND horario_rota = ?
+                  AND motoboy = ?
+                LIMIT 1
+            `, [data, horario, motoboy]);
+
+            const codigo =
+                existentes[0]?.codigo_acesso || codigoGerado;
+
+            await db.execute(`
+				INSERT INTO entregas_motoboy (
+					data_rota,
+					horario_rota,
+					motoboy,
+					codigo_acesso,
+					pedido,
+					cliente,
+					telefone,
+					endereco,
+					cidade,
+					total,
+					coletar,
+					status_entrega,
+					forma_pagamento,
+					pix_confirmado_atendente
+					)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, [
+				data,
+				horario,
+				motoboy,
+				codigo,
+				textoEntrega(req.body.pedido, 50) || null,
+				cliente,
+				textoEntrega(req.body.telefone, 30) || null,
+				endereco,
+				textoEntrega(req.body.cidade, 100) || null,
+				(centavos / 100).toFixed(2),
+				textoEntrega(req.body.coletar, 2000) || null,
+				'pendente',
+				req.body.ja_pago_pix === '1' ? 'pix' : 'pendente',
+				req.body.ja_pago_pix === '1' ? 1 : 0
+			]);
+
+            res.redirect(303, `/entregas/painel?data=${data}`);
+        } catch (erro) {
+            console.error('Erro ao cadastrar entrega:', erro);
+            res.status(500).send('Não foi possível cadastrar a entrega.');
+        }
+    }
+);
+
+// ======================================================
+// PÁGINA DO MOTOBOY
+// ======================================================
+
+app.get('/entregas/motoboy/:codigo', async (req, res) => {
+    const codigo = String(req.params.codigo || '');
+
+    if (!/^[a-f0-9-]{36}$/.test(codigo)) {
+        return res.status(404).send('Rota não encontrada.');
+    }
+
+    try {
+        const [entregas] = await db.execute(`
+            SELECT *,
+                DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+            FROM entregas_motoboy
+            WHERE codigo_acesso = ?
+            ORDER BY id
+        `, [codigo]);
+
+        if (!entregas.length) {
+            return res.status(404).send('Rota não encontrada.');
+        }
+
+        const contasAtivas = await carregarContasPrazoAtivas();
+        const grupos = agruparEntregasMotoboy(entregas);
+        const rota = entregas[0];
+
+        const cards = grupos.map(grupo => {
+            const primeiro = grupo[0];
+
+            const confirmados = grupo.filter(
+                pixConfirmadoPeloAtendente
+            );
+
+            const restantes = grupo.filter(
+                e => !pixConfirmadoPeloAtendente(e)
+            );
+
+            const total = somaGrupo(grupo, 'total');
+            const pixConfirmado = somaGrupo(confirmados, 'total');
+            const valorRestante = somaGrupo(restantes, 'total');
+
+            const contaAtiva = localizarContaPrazo(
+                contasAtivas,
+                primeiro.telefone
+            );
+
+            const contaInvalida = restantes.some(e =>
+                (
+                    e.cliente_conta_prazo_id != null &&
+                    (
+                        !contaAtiva ||
+                        Number(e.cliente_conta_prazo_id) !==
+                            Number(contaAtiva.id)
+                    )
+                ) ||
+                (
+                    e.forma_pagamento === 'conta_prazo' &&
+                    !contaAtiva
+                )
+            );
+
+            const estado = estadoGrupoEntrega(grupo);
+
+            const estadosDiferentes = new Set(
+                grupo.map(e => e.status_entrega)
+            ).size > 1;
+
+            const pedidos = grupo
+                .map(e => e.pedido || '—')
+                .join(', ');
+
+            const coletas = grupo
+                .map(e => String(e.coletar || '').trim())
+                .filter(Boolean)
+                .join(' — ');
+
+            const dinheiroPedido = grupo.reduce((soma, e) => {
+                if (e.forma_pagamento !== 'dinheiro') return soma;
+
+                return soma + centavosGrupo(
+                    e.valor_recebido_dinheiro ?? e.total
+                );
+            }, 0);
+
+            const pixInformado = restantes.reduce((soma, e) => {
+                if (e.forma_pagamento === 'pix') {
+                    return soma + centavosGrupo(e.total);
+                }
+
+                if (e.forma_pagamento === 'dinheiro') {
+                    return soma + centavosGrupo(e.valor_recebido_pix);
+                }
+
+                return soma;
+            }, 0);
+
+            const dinheiroSaldo = somaGrupo(
+                grupo,
+                'dinheiro_conta_prazo'
+            );
+
+            let opcoes;
+
+			if (Number(total) === 0) {
+				opcoes = `
+					<button
+						type="submit"
+						name="acao"
+						value="troca"
+						class="pix"
+					>
+						Troca
+					</button>
+
+					<div style="
+						padding: 12px;
+						border: 1px solid #666;
+						border-radius: 8px;
+					">
+						<div style="
+							display: grid;
+							grid-template-columns: repeat(2, minmax(0, 1fr));
+							gap: 10px;
+						">
+							<div style="min-width: 0;">
+								<label for="pix-troca-${primeiro.id}">
+									Valor no PIX
+								</label>
+
+								<input
+									id="pix-troca-${primeiro.id}"
+									name="pix_misto"
+									type="text"
+									inputmode="decimal"
+									autocomplete="off"
+									placeholder="Ex.: 40,00"
+									style="width: 100%; box-sizing: border-box;"
+								>
+							</div>
+
+							<div style="min-width: 0;">
+								<label for="dinheiro-troca-${primeiro.id}">
+									Valor em dinheiro
+								</label>
+
+								<input
+									id="dinheiro-troca-${primeiro.id}"
+									name="dinheiro_misto"
+									type="text"
+									inputmode="decimal"
+									autocomplete="off"
+									placeholder="Ex.: 25,00"
+									style="width: 100%; box-sizing: border-box;"
+								>
+							</div>
+						</div>
+
+						<p style="font-size: 13px;">
+							Informe o total recebido nesta troca.
+							Um campo pode ficar vazio.
+							Para registrar sem pagamento, clique em Troca.
+						</p>
+
+						<button
+							type="submit"
+							name="acao"
+							value="troca_pagamento"
+							class="pix"
+						>
+							Entregue — salvar pagamento
+						</button>
+					</div>
+
+					<button
+						type="submit"
+						name="acao"
+						value="nao_entregue"
+						class="cinza"
+					>
+						Não entregue
+					</button>
+				`;
+			} else if (!restantes.length) {
+				opcoes = `
+					<button
+						type="submit"
+						name="acao"
+						value="entregue_pago"
+						class="pix"
+					>
+						Entregue
+					</button>
+
+					<button
+						type="submit"
+						name="acao"
+						value="nao_entregue"
+						class="cinza"
+					>
+						Não entregue
+					</button>
+				`;
+			} else if (contaInvalida) {
+				opcoes = `
+					<p class="aviso">
+						A loja precisa conferir o cadastro da conta
+						a prazo antes de alterar esta entrega.
+					</p>
+				`;
+			} else if (contaAtiva) {
+                opcoes = opcoesEntregaPrazo({
+                    ...primeiro,
+                    dinheiro_conta_prazo: dinheiroSaldo / 100
+                });
+            } else {
+                opcoes = `
+                    <button name="acao" value="pix" class="pix">
+                        Entregue — cliente pagou no PIX
+                    </button>
+
+                    <button name="acao" value="dinheiro" class="dinheiro">
+                        Entregue — recebi em dinheiro
+                    </button>
+
+                    <div style="
+                        padding: 12px;
+                        border: 1px solid #666;
+                        border-radius: 8px;
+                    ">
+                        <div style="
+                            display: grid;
+                            grid-template-columns: repeat(2, minmax(0, 1fr));
+                            gap: 10px;
+                        ">
+                            <div style="min-width: 0;">
+                                <label for="pix-grupo-${primeiro.id}">
+                                    Valor no PIX
+                                </label>
+
+                                <input
+                                    id="pix-grupo-${primeiro.id}"
+                                    name="pix_misto"
+                                    type="text"
+                                    inputmode="decimal"
+                                    autocomplete="off"
+                                    placeholder="Ex.: 40,00"
+                                >
+                            </div>
+
+                            <div style="min-width: 0;">
+                                <label for="dinheiro-grupo-${primeiro.id}">
+                                    Valor em dinheiro
+                                </label>
+
+                                <input
+                                    id="dinheiro-grupo-${primeiro.id}"
+                                    name="dinheiro_misto"
+                                    type="text"
+                                    inputmode="decimal"
+                                    autocomplete="off"
+                                    placeholder="Ex.: 25,00"
+                                >
+                            </div>
+                        </div>
+
+                        <p class="aviso" style="font-size: 13px;">
+                            Informe o total recebido para os pedidos
+                            deste cartão. Não inclua o PIX já confirmado
+                            pelo atendente. Um campo pode ficar vazio.
+                        </p>
+
+                        <button
+                            name="acao"
+                            value="pix_dinheiro"
+                            class="pix"
+                        >
+                            Entregue — salvar pagamento
+                        </button>
+                    </div>
+
+                    <button name="acao" value="nao_entregue" class="cinza">
+                        Não entregue
+                    </button>
+                `;
+            }
+
+            return `
+                <article class="${estado}">
+                    <h2>${escaparHtml(primeiro.cliente)}</h2>
+
+                    <p>
+                        ${escaparHtml(primeiro.endereco)}
+                        <br>
+                        ${escaparHtml(primeiro.cidade || '')}
+                    </p>
+
+                    <p>
+                        Pedidos: ${escaparHtml(pedidos)}
+                        <br>
+                        Telefone: ${escaparHtml(primeiro.telefone || '—')}
+                    </p>
+
+                    <h2>
+                        Total dos pedidos: ${moedaEntregas(total / 100)}
+                    </h2>
+
+                    ${confirmados.length ? `
+                        <p style="color: #4ade80; font-weight: bold;">
+                            Já pago no PIX. Confirmado pelo atendente:
+                            ${moedaEntregas(pixConfirmado / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${restantes.length ? `
+                        <h2>
+                            ${
+                                contaAtiva
+                                    ? 'Valor dos pedidos a prazo'
+                                    : 'Valor dos pedidos sem PIX confirmado'
+                            }:
+                            ${moedaEntregas(valorRestante / 100)}
+                        </h2>
+                    ` : ''}
+
+                    ${coletas ? `
+                        <h2>
+                            Peças pra coletar:
+                            <span style="color: #ff4d4f;">
+                                ${escaparHtml(coletas)}
+                            </span>
+                        </h2>
+                    ` : ''}
+
+                    <p>
+                        Entrega:
+                        <strong>
+                            ${
+								estadosDiferentes
+									? 'Parcial — há pedidos com situações diferentes'
+									: Number(total) === 0 && estado === 'entregue'
+										? 'Troca'
+										: escaparHtml(statusEntregaTexto(estado))
+							}
+                        </strong>
+                    </p>
+
+                    ${pixInformado > 0 ? `
+                        <p style="color: #4ade80;">
+                            PIX registrado pelo motoboy:
+                            ${moedaEntregas(pixInformado / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${dinheiroPedido > 0 ? `
+                        <p style="color: #4ade80;">
+                            Dinheiro dos pedidos:
+                            ${moedaEntregas(dinheiroPedido / 100)}
+                        </p>
+                    ` : ''}
+
+                    ${dinheiroSaldo > 0 ? `
+                        <p style="color: #4ade80;">
+                            Dinheiro para abater saldo:
+                            ${moedaEntregas(dinheiroSaldo / 100)}
+                        </p>
+                    ` : ''}
+
+                    <form
+                        method="post"
+                        action="/entregas/${primeiro.id}/confirmar"
+                        class="botoes"
+                        onsubmit="return confirm('Confirma o registro para os pedidos deste cartão?')"
+                    >
+                        ${csrfEntregaCampo()}
+
+                        <input
+                            type="hidden"
+                            name="codigo"
+                            value="${escaparHtml(codigo)}"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="revisao"
+                            value="${revisaoGrupoEntrega(grupo)}"
+                        >
+
+                        ${opcoes}
+                    </form>
+                </article>
+            `;
+        }).join('');
+
+        res.send(paginaEntregas(
+            `Rota das ${rota.horario_rota}`,
+            `
+                <p>
+                    ${escaparHtml(rota.motoboy)}
+                    · ${escaparHtml(rota.data_formatada)}
+                </p>
+
+                ${cards}
+				
+				<script>
+				(function () {
+					const chavePosicao =
+						'posicao-rota-motoboy:' + window.location.pathname;
+
+					// Recupera a posição depois de salvar o pagamento.
+					try {
+						const salvo = sessionStorage.getItem(chavePosicao);
+
+						if (salvo !== null) {
+							sessionStorage.removeItem(chavePosicao);
+
+							const posicao = Number(salvo);
+
+							if (Number.isFinite(posicao) && posicao >= 0) {
+								const restaurar = function () {
+									requestAnimationFrame(function () {
+										window.scrollTo({
+											top: posicao,
+											left: 0,
+											behavior: 'instant'
+										});
+									});
+								};
+
+								if (document.readyState === 'complete') {
+									restaurar();
+								} else {
+									window.addEventListener(
+										'load',
+										restaurar,
+										{ once: true }
+									);
+								}
+							}
+						}
+					} catch (erro) {
+						// O registro continua funcionando se o navegador
+						// não permitir salvar a posição.
+					}
+
+					document.querySelectorAll('form.botoes').forEach(function (formulario) {
+						formulario.addEventListener('submit', function (evento) {
+							// Não guarda a posição se o motoboy cancelar
+							// a confirmação do formulário.
+							if (evento.defaultPrevented) {
+								return;
+							}
+
+							try {
+								sessionStorage.setItem(
+									chavePosicao,
+									String(window.scrollY)
+								);
+							} catch (erro) {
+								// Não interfere no envio do pagamento.
+							}
+						});
+					});
+				})();
+				</script>
+            `
+        ));
+    } catch (erro) {
+        console.error('Erro ao abrir rota agrupada:', erro);
+
+        res.status(500).send(
+            'Não foi possível abrir a rota. ' +
+            'Peça para a loja conferir os cadastros.'
+        );
+    }
+});
+
+// ======================================================
+// SALVAR CONFIRMAÇÃO DO MOTOBOY
+// ======================================================
+
+app.post(
+    '/entregas/:id/confirmar',
+    validarFormularioEntrega,
+    async (req, res) => {
+        const id = String(req.params.id || '');
+        const codigo = String(req.body.codigo || '');
+        const revisao = String(req.body.revisao || '');
+        const acao = String(req.body.acao || '');
+
+        const permitidas = [
+			'troca',
+			'troca_pagamento',
+            'entregue_pago',
+            'pix',
+            'dinheiro',
+            'pix_dinheiro',
+            'nao_entregue',
+            'conta_prazo',
+            'recebimento_prazo'
+        ];
+
+        if (
+            !/^\d+$/.test(id) ||
+            !/^[a-f0-9-]{36}$/.test(codigo) ||
+            !permitidas.includes(acao)
+        ) {
+            return res.status(400).send('Confirmação inválida.');
+        }
+
+        let conexao;
+
+        try {
+            conexao = await db.getConnection();
+            await conexao.beginTransaction();
+
+            // Lê e bloqueia os pedidos da rota durante a gravação.
+            const [todas] = await conexao.execute(`
+                SELECT *,
+                    DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+                FROM entregas_motoboy
+                WHERE codigo_acesso = ?
+                ORDER BY id
+                FOR UPDATE
+            `, [codigo]);
+
+            const base = todas.find(e => String(e.id) === id);
+
+            if (!base) {
+                throw erroGrupoEntrega(
+                    'A entrega foi removida. Atualize a rota.',
+                    409
+                );
+            }
+
+            const chave = chaveGrupoEntrega(base);
+
+            const grupo = todas.filter(
+                e => chaveGrupoEntrega(e) === chave
+            );
+
+            if (revisao !== revisaoGrupoEntrega(grupo)) {
+                throw erroGrupoEntrega(
+                    'Os pedidos deste cliente foram alterados. ' +
+                    'Atualize a rota e confira os valores antes de confirmar.',
+                    409
+                );
+            }
+
+            const confirmados = grupo.filter(
+                pixConfirmadoPeloAtendente
+            );
+
+            const restantes = grupo.filter(
+                e => !pixConfirmadoPeloAtendente(e)
+            );
+
+            const contas = await carregarContasPrazoAtivas(conexao);
+            const conta = localizarContaPrazo(contas, base.telefone);
+
+            const contaInvalida = restantes.some(e =>
+                (
+                    e.cliente_conta_prazo_id != null &&
+                    (
+                        !conta ||
+                        Number(e.cliente_conta_prazo_id) !==
+                            Number(conta.id)
+                    )
+                ) ||
+                (
+                    e.forma_pagamento === 'conta_prazo' &&
+                    !conta
+                )
+            );
+
+            if (contaInvalida) {
+                throw erroGrupoEntrega(
+                    'A loja precisa conferir o cadastro da conta a prazo.',
+                    403
+                );
+            }
+
+            const grupoTroca = grupo.every(e =>
+				e.total !== null &&
+				e.total !== undefined &&
+				Number(e.total) === 0
+			);
+
+			const acoesGrupo = grupoTroca
+				? ['troca', 'troca_pagamento', 'nao_entregue']
+				: !restantes.length
+					? ['entregue_pago', 'nao_entregue']
+					: conta
+						? ['conta_prazo', 'nao_entregue', 'recebimento_prazo']
+						: ['pix', 'dinheiro', 'pix_dinheiro', 'nao_entregue'];
+
+            if (!acoesGrupo.includes(acao)) {
+                throw erroGrupoEntrega(
+                    'Esta opção não está disponível para este cliente. ' +
+                    'Atualize a rota.',
+                    403
+                );
+            }
+
+            if (acao === 'troca') {
+				// Confirma a entrega sem alterar valores já registrados.
+				for (const e of grupo) {
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET status_entrega = 'entregue'
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [e.id, codigo]);
+				}
+			} else if (acao === 'troca_pagamento') {
+				const textoPix = String(req.body.pix_misto ?? '').trim();
+				const textoDinheiro = String(req.body.dinheiro_misto ?? '').trim();
+
+				const pix = textoPix === ''
+					? 0
+					: centavosEntregas(textoPix);
+
+				const dinheiro = textoDinheiro === ''
+					? 0
+					: centavosEntregas(textoDinheiro);
+
+				if (
+					pix === null ||
+					dinheiro === null ||
+					!Number.isFinite(pix) ||
+					!Number.isFinite(dinheiro) ||
+					pix < 0 ||
+					dinheiro < 0 ||
+					pix + dinheiro <= 0
+				) {
+					throw erroGrupoEntrega(
+						'Preencha pelo menos um valor maior que zero. ' +
+						'Para troca sem pagamento, clique em Troca.'
+					);
+				}
+
+				// Registra o total uma única vez no grupo.
+				// Um novo registro substitui o anterior.
+				for (let indice = 0; indice < grupo.length; indice++) {
+					const e = grupo[indice];
+
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET status_entrega = 'entregue',
+							forma_pagamento = 'dinheiro',
+							pix_confirmado_atendente = 0,
+							valor_recebido_pix = ?,
+							valor_recebido_dinheiro = ?
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						indice === 0 ? (pix / 100).toFixed(2) : '0.00',
+						indice === 0 ? (dinheiro / 100).toFixed(2) : '0.00',
+						e.id,
+						codigo
+					]);
+				}
+			} else if (acao === 'recebimento_prazo') {
+                const recebido = centavosEntregas(
+                    req.body.dinheiro_prazo
+                );
+
+                if (recebido === null) {
+                    throw erroGrupoEntrega(
+                        'Informe um valor válido. Para zerar, digite 0,00.'
+                    );
+                }
+
+                // Registra o dinheiro uma única vez e confirma
+				// a entrega de todos os pedidos do cartão.
+				// Não altera o saldo financeiro do cliente.
+				for (let indice = 0; indice < grupo.length; indice++) {
+					const e = grupo[indice];
+					const pixProtegido = pixConfirmadoPeloAtendente(e);
+
+					await conexao.execute(`
+						UPDATE entregas_motoboy
+						SET dinheiro_conta_prazo = ?,
+							cliente_conta_prazo_id = ?,
+							status_entrega = 'entregue',
+							forma_pagamento = ?,
+							pix_confirmado_atendente = ?,
+							valor_recebido_dinheiro = ?,
+							valor_recebido_pix = ?
+						WHERE id = ?
+						  AND codigo_acesso = ?
+					`, [
+						indice === 0
+							? (recebido / 100).toFixed(2)
+							: '0.00',
+						conta.id,
+						pixProtegido ? e.forma_pagamento : 'conta_prazo',
+						pixProtegido ? 1 : e.pix_confirmado_atendente,
+						pixProtegido ? e.valor_recebido_dinheiro : null,
+						pixProtegido ? e.valor_recebido_pix : null,
+						e.id,
+						codigo
+					]);
+				}
+            } else if (acao === 'nao_entregue') {
+                // Marcar como não entregue não apaga dinheiro
+                // ou PIX que já tenham sido registrados.
+                for (const e of grupo) {
+                    await conexao.execute(`
+                        UPDATE entregas_motoboy
+                        SET status_entrega = 'nao_entregue',
+                            pix_confirmado_atendente = ?
+                        WHERE id = ?
+                          AND codigo_acesso = ?
+                    `, [
+                        pixConfirmadoPeloAtendente(e)
+                            ? 1
+                            : e.pix_confirmado_atendente,
+                        e.id,
+                        codigo
+                    ]);
+                }
+            } else {
+                // Os pedidos pagos pelo atendente só mudam de status.
+                for (const e of confirmados) {
+                    await conexao.execute(`
+                        UPDATE entregas_motoboy
+                        SET status_entrega = 'entregue',
+                            pix_confirmado_atendente = 1
+                        WHERE id = ?
+                          AND codigo_acesso = ?
+                    `, [e.id, codigo]);
+                }
+
+                if (acao === 'conta_prazo') {
+                    for (const e of restantes) {
+                        await conexao.execute(`
+                            UPDATE entregas_motoboy
+                            SET status_entrega = 'entregue',
+                                forma_pagamento = 'conta_prazo',
+                                cliente_conta_prazo_id = ?,
+                                valor_recebido_dinheiro = NULL,
+                                valor_recebido_pix = NULL
+                            WHERE id = ?
+                              AND codigo_acesso = ?
+                        `, [conta.id, e.id, codigo]);
+                    }
+                } else if (restantes.length) {
+                    const total = somaGrupo(restantes, 'total');
+
+                    let pix = 0;
+                    let dinheiro = 0;
+
+                    if (acao === 'pix') {
+                        pix = total;
+                    } else if (acao === 'dinheiro') {
+                        dinheiro = total;
+                    } else {
+                        const textoPix = String(
+                            req.body.pix_misto ?? ''
+                        ).trim();
+
+                        const textoDinheiro = String(
+                            req.body.dinheiro_misto ?? ''
+                        ).trim();
+
+                        pix = textoPix === ''
+                            ? 0
+                            : centavosEntregas(textoPix);
+
+                        dinheiro = textoDinheiro === ''
+                            ? 0
+                            : centavosEntregas(textoDinheiro);
+
+                        if (
+                            pix === null ||
+                            dinheiro === null ||
+                            pix + dinheiro <= 0
+                        ) {
+                            throw erroGrupoEntrega(
+                                'Preencha pelo menos um valor maior que zero.'
+                            );
+                        }
+                    }
+
+                    const distribuicao = distribuirPagamentoGrupo(
+                        restantes,
+                        pix,
+                        dinheiro
+                    );
+
+                    for (const parte of distribuicao) {
+                        // Mantém compatibilidade com os cálculos
+                        // atuais de PIX, dinheiro e Sem marcação.
+                        const forma = acao === 'pix'
+                            ? 'pix'
+                            : 'dinheiro';
+
+                        await conexao.execute(`
+                            UPDATE entregas_motoboy
+                            SET status_entrega = 'entregue',
+                                forma_pagamento = ?,
+                                valor_recebido_pix = ?,
+                                valor_recebido_dinheiro = ?
+                            WHERE id = ?
+                              AND codigo_acesso = ?
+                        `, [
+                            forma,
+                            forma === 'pix'
+                                ? null
+                                : (parte.pix / 100).toFixed(2),
+                            forma === 'pix'
+                                ? null
+                                : (parte.dinheiro / 100).toFixed(2),
+                            parte.entrega.id,
+                            codigo
+                        ]);
+                    }
+                }
+            }
+
+            await conexao.commit();
+
+            return res.redirect(
+                303,
+                '/entregas/motoboy/' + encodeURIComponent(codigo)
+            );
+        } catch (erro) {
+            if (conexao) {
+                try {
+                    await conexao.rollback();
+                } catch (erroRollback) {
+                    console.error(
+                        'Erro ao desfazer confirmação agrupada:',
+                        erroRollback
+                    );
+                }
+            }
+
+            console.error('Erro ao confirmar grupo:', erro);
+
+            return res.status(erro.status || 500).send(
+                paginaEntregas('Confira a rota', `
+                    <section>
+                        <p>
+                            ${escaparHtml(
+                                erro.status
+                                    ? erro.message
+                                    : 'Não foi possível confirmar a gravação. ' +
+                                      'Atualize a rota e confira os registros.'
+                            )}
+                        </p>
+
+                        <a href="/entregas/motoboy/${encodeURIComponent(codigo)}">
+                            Atualizar rota
+                        </a>
+                    </section>
+                `)
+            );
+        } finally {
+            if (conexao) {
+                conexao.release();
+            }
+        }
+    }
+);
+
+// ======================================================
+// CONFERÊNCIA POR CLIENTE E COMPROVANTES DA LOJA
+// ======================================================
+
+let tabelaComprovantesRotaPronta = null;
+
+function prepararComprovantesRota() {
+    if (!tabelaComprovantesRotaPronta) {
+        tabelaComprovantesRotaPronta = (async () => {
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS entregas_comprovantes_cloud (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    entrega_id INT NOT NULL,
+                    pedidos_ids TEXT NOT NULL,
+                    nome VARCHAR(255) NOT NULL,
+                    tipo VARCHAR(50) NOT NULL,
+                    public_id VARCHAR(255) NOT NULL,
+                    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_comprovante_entrega (entrega_id)
+                )
+            `);
+
+            const alteracoes = [
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN valor_centavos BIGINT NULL`,
+
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN leitura_status VARCHAR(20)
+                 NOT NULL DEFAULT 'pendente'`,
+
+                `ALTER TABLE entregas_comprovantes_cloud
+                 ADD COLUMN arquivo_hash CHAR(64) NULL UNIQUE`
+            ];
+
+            for (const sql of alteracoes) {
+                try {
+                    await db.execute(sql);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') throw erro;
+                }
+            }
+        })().catch(erro => {
+            tabelaComprovantesRotaPronta = null;
+            throw erro;
+        });
+    }
+
+    return tabelaComprovantesRotaPronta;
+}
+
+let leituraComprovanteOcupada = false;
+
+async function lerValorComprovanteRota(buffer, tipo) {
+    // Evita sobrecarregar o servidor com vários OCR simultâneos.
+    // Se estiver ocupado, salva o arquivo com valor pendente.
+    if (leituraComprovanteOcupada) return null;
+
+    leituraComprovanteOcupada = true;
+
+    try {
+        return await new Promise(resolve => {
+            const processo = require('child_process').execFile(
+                process.execPath,
+                [
+                    require('path').join(__dirname, 'ler-comprovante.js'),
+                    tipo
+                ],
+                {
+                    timeout: 45000,
+                    killSignal: 'SIGKILL',
+                    maxBuffer: 1024 * 1024
+                },
+                (erro, stdout) => {
+                    if (erro) return resolve(null);
+
+                    try {
+                        const { valor } = JSON.parse(stdout);
+
+                        resolve(
+                            Number.isSafeInteger(valor) && valor > 0
+                                ? valor
+                                : null
+                        );
+                    } catch {
+                        resolve(null);
+                    }
+                }
+            );
+
+            processo.stdin.on('error', () => {});
+            processo.stdin.end(buffer);
+        });
+    } finally {
+        leituraComprovanteOcupada = false;
+    }
+}
+
+function enviarComprovanteRotaCloud(buffer, tipo) {
+    const extensoes = {
+        'application/pdf': 'pdf',
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp'
+    };
+
+    const extensao = extensoes[tipo];
+
+    if (!extensao) {
+        throw new Error('Formato de comprovante inválido.');
+    }
+
+    const publicId =
+		'comprovantes_conferencias/' +
+		cryptoEntregas.randomUUID() +
+		'.' + extensao;
+
+    return new Promise((resolve, reject) => {
+        const envio = cloudinary.uploader.upload_stream(
+            {
+				resource_type: 'raw',
+				type: 'authenticated',
+				asset_folder: 'comprovantes_conferencias',
+				public_id: publicId,
+				overwrite: false
+			},
+            (erro, resultado) => {
+                if (erro) {
+                    return reject(erro);
+                }
+
+                if (!resultado?.public_id) {
+                    return reject(
+                        new Error('Cloudinary não confirmou o envio.')
+                    );
+                }
+
+                resolve(resultado);
+            }
+        );
+
+        envio.on('error', reject);
+        envio.end(buffer);
+    });
+}
+
+const receberComprovanteRota = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+        fields: 3,
+        parts: 4
+    }
+}).single('comprovante');
+
+function tipoComprovanteRota(buffer) {
+    if (
+        buffer.length >= 5 &&
+        buffer.subarray(0, 5).toString() === '%PDF-'
+    ) {
+        return 'application/pdf';
+    }
+
+    if (
+        buffer.length >= 3 &&
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff
+    ) {
+        return 'image/jpeg';
+    }
+
+    if (
+        buffer.length >= 8 &&
+        buffer.subarray(0, 8).equals(
+            Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+        )
+    ) {
+        return 'image/png';
+    }
+
+    if (
+        buffer.length >= 12 &&
+        buffer.subarray(0, 4).toString() === 'RIFF' &&
+        buffer.subarray(8, 12).toString() === 'WEBP'
+    ) {
+        return 'image/webp';
+    }
+
+    return null;
+}
+
+async function buscarGrupoConferenciaLoja(id) {
+    if (!/^\d+$/.test(String(id))) {
+        return null;
+    }
+
+    const [encontradas] = await db.execute(`
+        SELECT *,
+            DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+        FROM entregas_motoboy
+        WHERE id = ?
+    `, [id]);
+
+    const entrega = encontradas[0];
+
+    if (!entrega) {
+        return null;
+    }
+
+    const [rota] = await db.execute(`
+        SELECT *,
+            DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+        FROM entregas_motoboy
+        WHERE data_rota = ?
+          AND horario_rota = ?
+          AND motoboy = ?
+        ORDER BY id
+    `, [
+        entrega.dia_grupo,
+        entrega.horario_rota,
+        entrega.motoboy
+    ]);
+
+    const chave = chaveGrupoEntrega(entrega);
+
+    return rota.filter(e => chaveGrupoEntrega(e) === chave);
+}
+
+async function prepararConfirmacaoPagamentoLoja() {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS entregas_pagamentos_conferidos (
+            entrega_id INT NOT NULL PRIMARY KEY,
+            revisao CHAR(64) NOT NULL,
+            confirmado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+}
+
+function revisaoPagamentoLoja(grupo) {
+    const ordenados = [...grupo].sort(
+        (a, b) => Number(a.id) - Number(b.id)
+    );
+
+    return revisaoGrupoEntrega(ordenados);
+}
+
+app.get(
+    '/entregas/conferencia/rota',
+    autenticarEntregas,
+    async (req, res) => {
+        const data = String(req.query.data || hojeEntregas());
+        const horario = String(req.query.horario || '');
+        const motoboy = String(req.query.motoboy || '');
+
+        if (
+            !dataValidaEntregas(data) ||
+            !/^\d{2}:\d{2}$/.test(horario) ||
+            !motoboy ||
+            motoboy.length > 100
+        ) {
+            return res.status(400).send('Rota inválida.');
+        }
+
+        try {
+            await prepararComprovantesRota();
+
+            const [entregas] = await db.execute(`
+                SELECT *,
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS dia_grupo
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                  AND horario_rota = ?
+                  AND motoboy = ?
+                ORDER BY id DESC
+            `, [data, horario, motoboy]);
+
+            // Não carrega os arquivos nesta consulta, apenas seus dados.
+            const [comprovantes] = await db.execute(`
+                SELECT
+                    c.id,
+                    c.entrega_id,
+                    c.pedidos_ids,
+					c.nome,
+					c.valor_centavos,
+					c.leitura_status
+                FROM entregas_comprovantes_cloud c
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM entregas_motoboy e
+                    WHERE e.data_rota = ?
+                      AND e.horario_rota = ?
+                      AND e.motoboy = ?
+                      AND JSON_CONTAINS(
+                          c.pedidos_ids,
+                          JSON_QUOTE(CAST(e.id AS CHAR))
+                      )
+                )
+                ORDER BY c.id DESC
+            `, [data, horario, motoboy]);
+
+            const grupos = agruparEntregasMotoboy(entregas);
+			
+			await prepararConfirmacaoPagamentoLoja();
+
+			const [pagamentosConferidos] = await db.execute(`
+				SELECT c.entrega_id, c.revisao
+				FROM entregas_pagamentos_conferidos c
+				INNER JOIN entregas_motoboy e ON e.id = c.entrega_id
+				WHERE e.data_rota = ?
+				  AND e.horario_rota = ?
+				  AND e.motoboy = ?
+			`, [data, horario, motoboy]);
+
+			const confirmacoesPagamentoLoja = new Map(
+				pagamentosConferidos.map(c => [
+					String(c.entrega_id),
+					c.revisao
+				])
+			);
+			
+			await gcPrepararHistorico();
+
+			const [baixasDaRota] = await db.execute(`
+				SELECT b.entrega_id, b.status
+				FROM entregas_gc_baixas b
+				INNER JOIN entregas_motoboy e
+					ON e.id = b.entrega_id
+				WHERE e.data_rota = ?
+				  AND e.horario_rota = ?
+				  AND e.motoboy = ?
+			`, [data, horario, motoboy]);
+
+			const statusBaixasRota = new Map();
+
+			for (const baixa of baixasDaRota) {
+				const id = String(baixa.entrega_id);
+
+				if (statusBaixasRota.get(id) !== 'confirmado') {
+					statusBaixasRota.set(id, baixa.status);
+				}
+			}
+
+            const cartoes = grupos.map(grupo => {
+                const primeiro = grupo[0];
+				
+				const botoesContasReceber = grupo.map(e => {
+					const numeroPedido = String(e.pedido || '').trim();
+					const lojaId = String(
+						process.env.GESTAOCLICK_LOJA_ID || ''
+					).trim();
+
+					if (!numeroPedido || !lojaId) return '';
+
+					const parametros = new URLSearchParams({
+						loja: lojaId,
+						codigo: '',
+						'numero-boleto': '',
+						'tipo-entidade': 'C',
+						cliente: '',
+						fornecedor: '',
+						transportadora: '',
+						funcionario: '',
+						outros: '',
+						nome: numeroPedido,
+						data_inicio: '',
+						data_fim: '',
+						data_inicio_emissao: '',
+						data_fim_emissao: '',
+						data_inicio_boleto: '',
+						data_fim_boleto: '',
+						valor_inicio: '',
+						valor_fim: '',
+						baixado: '',
+						situacao: '',
+						categoria: '',
+						'centro-custo': '',
+						nota: '',
+						nfse: '',
+						nfse_id: '',
+						conta_bancaria: '',
+						forma_pagamento: '',
+						atributo: '',
+						tipo: 'C',
+						situacaoBuscaAvancada: 'true'
+					});
+
+					const url =
+						'https://gestaoclick.com/financeiro/' +
+						'movimentacoes_financeiras/index_recebimento?' +
+						parametros.toString();
+
+					return `
+						<a
+							href="${escaparHtml(url)}"
+							target="_blank"
+							rel="noopener noreferrer"
+							style="
+								display: inline-block;
+								padding: 12px 16px;
+								margin: 6px 8px 6px 0;
+								background: #374151;
+								color: white;
+								border-radius: 8px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Contas a receber — Pedido ${escaparHtml(numeroPedido)}
+						</a>
+					`;
+				}).join('');
+				
+				const botoesGestaoClick = grupo.map(e => {
+					const pedido = escaparHtml(e.pedido || String(e.id));
+					const statusBaixa = statusBaixasRota.get(String(e.id));
+
+					if (statusBaixa === 'confirmado') {
+						return `
+							<p style="color:#4ade80; font-weight:bold;">
+								✓ Pedido ${pedido}: pagamento confirmado no GestãoClick
+							</p>
+						`;
+					}
+					
+					if (statusBaixa === 'parcial_confirmado') {
+						return `
+							<p style="color:#f59e0b; font-weight:bold;">
+								Pedido ${pedido}: pagamento parcial confirmado no GestãoClick.
+								Existe saldo em aberto.
+							</p>
+
+							<p style="color:#ccc;">
+								Quando receber o restante, faça a baixa do saldo
+								diretamente no GestãoClick.
+							</p>
+						`;
+					}
+
+					if (statusBaixa) {
+						return `
+							<p style="color:#f1c40f;">
+								Pedido ${pedido}: existe uma tentativa registrada.
+								Confira o resultado no GestãoClick antes de tentar novamente.
+							</p>
+						`;
+					}
+
+					if (e.forma_pagamento === 'conta_prazo') {
+						return `
+							<p style="color:#ccc;">
+								Pedido ${pedido}: conta a prazo — conferência manual.
+							</p>
+						`;
+					}
+
+					return `
+						<a
+							href="/entregas/${Number(e.id)}/gestaoclick"
+							style="
+								display: inline-block;
+								padding: 12px 16px;
+								margin: 6px 8px 6px 0;
+								background: #15803d;
+								color: white;
+								border-radius: 8px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Confirmar pagamento no GestãoClick
+							${grupo.length > 1 ? '— Pedido ' + pedido : ''}
+						</a>
+					`;
+				}).join('');
+
+                const ids = new Set(grupo.map(e => String(e.id)));
+
+                let total = 0;
+                let pix = 0;
+                let dinheiro = 0;
+                let prazo = 0;
+                let abater = 0;
+                let pendente = 0;
+
+                for (const e of grupo) {
+                    const valor = centavosGrupo(e.total);
+                    total += valor;
+                    abater += centavosGrupo(e.dinheiro_conta_prazo);
+
+                    if (
+                        pixConfirmadoPeloAtendente(e) ||
+                        e.forma_pagamento === 'pix'
+                    ) {
+                        pix += valor;
+                    } else if (e.forma_pagamento === 'dinheiro') {
+                        const recebidoPix = centavosGrupo(
+                            e.valor_recebido_pix
+                        );
+                        const recebidoDinheiro = centavosGrupo(
+                            e.valor_recebido_dinheiro ?? e.total
+                        );
+
+                        pix += recebidoPix;
+                        dinheiro += recebidoDinheiro;
+
+                        if (e.status_entrega !== 'nao_entregue') {
+                            pendente += Math.max(
+                                0,
+                                valor - recebidoPix - recebidoDinheiro
+                            );
+                        }
+                    } else if (
+                        e.forma_pagamento === 'conta_prazo' &&
+                        e.status_entrega === 'entregue'
+                    ) {
+                        prazo += valor;
+                    } else if (e.status_entrega !== 'nao_entregue') {
+                        pendente += valor;
+                    }
+                }
+
+                const todosEntregues = grupo.every(
+                    e => e.status_entrega === 'entregue'
+                );
+                const nenhumEntregue = grupo.every(
+                    e => e.status_entrega === 'nao_entregue'
+                );
+
+                const situacao = todosEntregues
+                    ? (total === 0 ? 'Troca entregue' : 'Entregue')
+                    : nenhumEntregue
+                        ? 'Não entregue'
+                        : 'Pendente ou parcialmente entregue';
+
+                const pagamentoConfirmadoGC = grupo.every(
+					e => statusBaixasRota.get(String(e.id)) === 'confirmado'
+				);
+
+				const temContaPrazo = grupo.some(
+					e => e.forma_pagamento === 'conta_prazo'
+				);
+
+				const classe = temContaPrazo
+					? 'conferencia-conta-prazo'
+					: pagamentoConfirmadoGC
+						? 'entregue'
+						: '';
+
+                const coletas = grupo
+                    .map(e => String(e.coletar || '').trim())
+                    .filter(Boolean)
+                    .join(' — ');
+
+                const anexos = comprovantes.filter(c => {
+                    const vinculados = JSON.parse(c.pedidos_ids);
+                    return vinculados.some(id => ids.has(String(id)));
+                });
+
+                const totalComprovantes = anexos.reduce((soma, c) => {
+					if (
+						c.leitura_status === 'ignorado' ||
+						c.valor_centavos === null
+					) {
+						return soma;
+					}
+
+					return soma + Number(c.valor_centavos);
+				}, 0);
+
+				const leiturasPendentes = anexos.filter(c =>
+					c.leitura_status !== 'ignorado' &&
+					c.valor_centavos === null
+				).length;
+
+				const diferencaComprovantes = pix - totalComprovantes;
+
+				const listaAnexos = anexos.length
+					? anexos.map(c => {
+						const temValor = c.valor_centavos !== null;
+						const ignorado = c.leitura_status === 'ignorado';
+
+						const valorCampo = temValor
+							? (Number(c.valor_centavos) / 100).toFixed(2).replace('.', ',')
+							: '';
+
+						const situacaoLeitura = ignorado
+							? 'Fora da soma'
+							: !temValor
+								? 'Valor não identificado — preencha abaixo'
+								: c.leitura_status === 'automatico'
+									? 'Valor identificado automaticamente — confira'
+									: 'Valor conferido manualmente';
+
+						return `
+							<li style="margin-bottom:18px;">
+								<a
+									href="/entregas/comprovantes-loja/${Number(c.id)}"
+									target="_blank"
+									rel="noopener"
+								>
+									${escaparHtml(c.nome)}
+								</a>
+
+								<p style="margin:6px 0; color:#f59e0b;">
+									${situacaoLeitura}
+								</p>
+
+								<form
+									method="post"
+									action="/entregas/comprovantes-loja/${Number(c.id)}/valor"
+									style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;"
+								>
+									${csrfEntregaCampo()}
+
+									<input
+										type="hidden"
+										name="entrega_id"
+										value="${Number(primeiro.id)}"
+									>
+
+									<label>
+										Valor do comprovante
+										<input
+											type="text"
+											name="valor"
+											inputmode="decimal"
+											placeholder="Ex.: 35,00"
+											value="${valorCampo}"
+											style="width:150px; max-width:100%;"
+										>
+									</label>
+
+									<button
+										type="submit"
+										name="acao"
+										value="salvar"
+										style="width:auto;"
+									>
+										Salvar valor
+									</button>
+
+									<button
+										type="submit"
+										name="acao"
+										value="ignorar"
+										style="width:auto; background:#555; color:white;"
+									>
+										Não somar
+									</button>
+								</form>
+							</li>
+						`;
+					}).join('')
+					: '<li>Nenhum comprovante anexado.</li>';
+
+                return `
+                    <article
+                        id="cliente-${Number(primeiro.id)}"
+                        class="${classe}"
+                    >
+                        <h2>${escaparHtml(primeiro.cliente)}</h2>
+
+                        <p>
+                            Pedidos:
+                            ${grupo.map(e =>
+                                escaparHtml(e.pedido || '—')
+                            ).join(', ')}
+                        </p>
+						
+						<p>
+                            Telefone:
+                            ${escaparHtml(primeiro.telefone || 'Não informado')}
+							<br>
+							Endereço:
+                            ${escaparHtml(primeiro.endereco || '')} - ${escaparHtml(primeiro.cidade || '')}
+                        </p>
+
+                        <p>Entrega: <strong>${situacao}</strong></p>
+
+                        <div class="valores-conferencia-loja">
+                            <p>
+                                Total dos pedidos<br>
+                                <strong>${moedaEntregas(total / 100)}</strong>
+                            </p>
+                            <p>
+                                PIX informado<br>
+                                <strong>${moedaEntregas(pix / 100)}</strong>
+                            </p>
+                            <p>
+                                Dinheiro dos pedidos<br>
+                                <strong>${moedaEntregas(dinheiro / 100)}</strong>
+                            </p>
+                            <p>
+                                Conta a prazo<br>
+                                <strong>${moedaEntregas(prazo / 100)}</strong>
+                            </p>
+                            <p>
+                                Dinheiro para abater saldo<br>
+                                <strong>${moedaEntregas(abater / 100)}</strong>
+                            </p>
+                            <p style="${pendente > 0 ? 'color:#ff4d4f;' : ''}">
+                                Sem marcação<br>
+                                <strong>${moedaEntregas(pendente / 100)}</strong>
+                            </p>
+                        </div>
+
+                        ${coletas ? `
+                            <p>
+                                Peças para coletar:
+                                <strong style="color:#ff4d4f;">
+                                    ${escaparHtml(coletas)}
+                                </strong>
+                            </p>
+                        ` : ''}
+
+                        <div style="margin: 20px 0;">
+							${botoesGestaoClick}
+							${botoesContasReceber}
+						</div>
+
+						<h3>Comprovantes anexados</h3>
+
+						<p>
+							Total dos valores identificados:
+							<strong>${moedaEntregas(totalComprovantes / 100)}</strong>
+						</p>
+
+						<p>
+							PIX informado pelo motoboy:
+							<strong>${moedaEntregas(pix / 100)}</strong>
+						</p>
+
+						${leiturasPendentes > 0 ? `
+							<p style="color:#f59e0b; font-weight:bold;">
+								Soma incompleta: ${leiturasPendentes}
+								comprovante(s) sem valor identificado.
+							</p>
+						` : anexos.some(c => c.leitura_status !== 'ignorado') ? `
+							<p style="color:${
+								diferencaComprovantes === 0 ? '#4ade80' : '#ff4d4f'
+							}; font-weight:bold;">
+								${
+									diferencaComprovantes === 0
+										? 'Os valores dos comprovantes coincidem com o PIX informado.'
+										: diferencaComprovantes > 0
+											? 'Faltam ' +
+											  moedaEntregas(diferencaComprovantes / 100) +
+											  ' em comprovantes.'
+											: 'Os comprovantes excedem o PIX informado em ' +
+											  moedaEntregas(-diferencaComprovantes / 100) + '.'
+								}
+							</p>
+						` : ''}
+
+						<p style="color:#aaa; font-size:14px;">
+							Confira os valores lidos. A soma dos comprovantes não confirma
+							o recebimento no banco.
+						</p>
+
+						<ul>${listaAnexos}</ul>
+
+                        <form
+                            method="post"
+                            enctype="multipart/form-data"
+                            action="/entregas/conferencia/cliente/${Number(primeiro.id)}/comprovante"
+                        >
+                            ${csrfEntregaCampo()}
+							
+							<div style="
+								display: flex;
+								align-items: center;
+								gap: 16px;
+								flex-wrap: wrap;
+							">
+							
+							<div
+								tabindex="0"
+								role="group"
+								aria-label="Colar imagem do comprovante"
+								style="
+									padding: 20px;
+									margin-bottom: 0;
+									flex: 1 1 280px;
+									min-width: 0;
+									box-sizing: border-box;
+									border: 2px dashed #888;
+									border-radius: 10px;
+									background: #303030;
+									color: white;
+									text-align: center;
+									cursor: pointer;
+								"
+								onclick="this.focus();"
+								onfocus="this.style.borderColor = '#f1c40f';"
+								onblur="this.style.borderColor = '#888';"
+								onpaste="
+									event.preventDefault();
+
+									if (this.dataset.enviando === '1') return;
+
+									const itens = Array.from(
+										event.clipboardData?.items || []
+									);
+
+									const item = itens.find(function (item) {
+										return item.kind === 'file' &amp;&amp;
+											item.type.startsWith('image/');
+									});
+
+									if (!item) {
+										alert(
+											'Nenhuma imagem encontrada. No WhatsApp, ' +
+											'use Copiar imagem e depois cole aqui.'
+										);
+										return;
+									}
+
+									const arquivo = item.getAsFile();
+
+									if (!arquivo) {
+										alert('Não foi possível ler a imagem copiada.');
+										return;
+									}
+
+									const extensoes = {
+										'image/png': 'png',
+										'image/jpeg': 'jpg',
+										'image/webp': 'webp'
+									};
+
+									const extensao = extensoes[arquivo.type];
+
+									if (!extensao) {
+										alert('Use uma imagem PNG, JPG ou WEBP.');
+										return;
+									}
+
+									if (arquivo.size > 5 * 1024 * 1024) {
+										alert('O comprovante deve ter no máximo 5 MB.');
+										return;
+									}
+
+									const formulario = this.closest('form');
+									const campo = formulario.querySelector(
+										'input[type=file][name=comprovante]'
+									);
+
+									try {
+										const transferencia = new DataTransfer();
+
+										transferencia.items.add(
+											new File(
+												[arquivo],
+												'comprovante-' + Date.now() + '.' + extensao,
+												{ type: arquivo.type }
+											)
+										);
+
+										campo.files = transferencia.files;
+									} catch (erro) {
+										alert(
+											'Não foi possível colar neste navegador. ' +
+											'Use Escolher arquivo.'
+										);
+										return;
+									}
+
+									if (!formulario.reportValidity()) return;
+
+									this.dataset.enviando = '1';
+									this.textContent = 'Enviando comprovante…';
+
+									formulario.requestSubmit();
+								"
+							>
+								📋 Clique aqui e pressione <strong>Ctrl+V</strong>
+								<br>
+								<small>para anexar a imagem copiada do WhatsApp</small>
+							</div>
+							
+							<div style="flex: 1 1 280px; min-width: 0;">
+                            <label for="arquivo-${Number(primeiro.id)}">
+                                Anexar comprovante — até 5 MB
+                            </label>
+
+                            <input
+								id="arquivo-${Number(primeiro.id)}"
+								type="file"
+								name="comprovante"
+								accept=".jpg,.jpeg,.png,.webp,.pdf"
+								required
+								onchange="
+									if (!this.files.length) return;
+
+									if (this.files[0].size > 5 * 1024 * 1024) {
+										alert('O comprovante deve ter no máximo 5 MB.');
+										this.value = '';
+										return;
+									}
+
+									this.form.requestSubmit();
+								"
+							>
+							
+							    </div>
+							</div>
+                        </form>
+                    </article>
+                `;
+            }).join('');
+
+            res.set('Cache-Control', 'no-store');
+
+            res.send(paginaEntregas('Conferência da rota', `
+                <style>
+                    .valores-conferencia-loja {
+                        display: grid;
+                        grid-template-columns:
+                            repeat(auto-fit, minmax(180px, 1fr));
+                        gap: 8px 20px;
+                    }
+
+                    .valores-conferencia-loja strong {
+                        display: inline-block;
+                        margin-top: 6px;
+                        font-size: 22px;
+                    }
+					
+					article.conferencia-conta-prazo {
+						border-left-color: #f59e0b;
+					}
+
+                    article input[type="file"] {
+                        width: 100%;
+                        min-width: 0;
+                    }
+
+                    article li {
+                        margin-bottom: 10px;
+                        overflow-wrap: anywhere;
+                    }
+                </style>
+
+                <section>
+                    <div style="
+						display: flex;
+						justify-content: space-between;
+						align-items: center;
+						flex-wrap: wrap;
+						gap: 12px;
+						margin-bottom: 16px;
+					">
+						<div style="
+							display: flex;
+							justify-content: space-between;
+							align-items: center;
+							flex-wrap: wrap;
+							gap: 12px;
+							margin-bottom: 16px;
+						">
+							<h2 style="margin: 0;">
+								Rota das ${escaparHtml(horario)}
+							</h2>
+						</div>
+
+					</div>
+                    <p>
+                        ${escaparHtml(motoboy)} ·
+                        ${data.split('-').reverse().join('/')}
+                    </p>
+
+                    <p class="aviso">
+                        Os valores refletem os registros das entregas.
+                        Anexar comprovante não confirma o pagamento.
+                    </p>
+
+                </section>
+
+                ${cartoes || '<section>Nenhuma entrega nesta rota.</section>'}
+            `));
+        } catch (erro) {
+            console.error(
+                'Erro na conferência por cliente:',
+                erro.message
+            );
+
+            res.status(500).send('Não foi possível abrir a rota.');
+        }
+    }
+);
+
+app.post(
+    '/entregas/conferencia/cliente/:id/comprovante',
+    autenticarEntregas,
+    (req, res, next) => {
+        receberComprovanteRota(req, res, erro => {
+            if (erro) {
+                return res.status(400).send(
+                    erro.code === 'LIMIT_FILE_SIZE'
+                        ? 'O arquivo excede 5 MB. Volte e escolha um arquivo menor.'
+                        : 'Não foi possível receber o arquivo. Envie um comprovante por vez.'
+                );
+            }
+
+            next();
+        });
+    },
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            if (!req.file?.buffer?.length) {
+                return res.status(400).send('Selecione um comprovante.');
+            }
+
+            const tipo = tipoComprovanteRota(req.file.buffer);
+
+            if (!tipo) {
+                return res.status(400).send(
+                    'Formato não permitido. Use JPG, PNG, WEBP ou PDF.'
+                );
+            }
+
+            const grupo = await buscarGrupoConferenciaLoja(req.params.id);
+
+            if (!grupo?.length) {
+                return res.status(404).send('Entrega não encontrada.');
+            }
+
+            await prepararComprovantesRota();
+
+            const nome = String(req.file.originalname || 'Comprovante')
+                .replace(/[\x00-\x1f\x7f]/g, '')
+                .slice(0, 255);
+				
+			const arquivoHash = require('crypto')
+				.createHash('sha256')
+				.update(req.file.buffer)
+				.digest('hex');
+
+			const [duplicados] = await db.execute(`
+				SELECT id
+				FROM entregas_comprovantes_cloud
+				WHERE arquivo_hash = ?
+				LIMIT 1
+			`, [arquivoHash]);
+
+			if (duplicados.length) {
+				return res.status(409).send(
+					'Este mesmo arquivo já foi anexado. ' +
+					'Volte à conferência e confira os comprovantes cadastrados.'
+				);
+			}
+
+			const valorLido = await lerValorComprovanteRota(
+				req.file.buffer,
+				tipo
+			);	
+
+            const arquivoCloud = await enviarComprovanteRotaCloud(
+				req.file.buffer,
+				tipo
+			);
+
+			try {
+				await db.execute(`
+					INSERT INTO entregas_comprovantes_cloud (
+						entrega_id,
+						pedidos_ids,
+						nome,
+						tipo,
+						public_id,
+						arquivo_hash,
+						valor_centavos,
+						leitura_status
+					)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				`, [
+					req.params.id,
+					JSON.stringify(grupo.map(e => String(e.id))),
+					nome,
+					tipo,
+					arquivoCloud.public_id,
+					arquivoHash,
+					valorLido,
+					valorLido === null ? 'pendente' : 'automatico'
+				]);
+			} catch (erroBanco) {
+				// Preserva o arquivo caso o banco tenha gravado,
+				// mas a conexão tenha falhado antes de responder.
+				console.error(
+					'Confira o vínculo do comprovante no banco. ID Cloudinary:',
+					arquivoCloud.public_id
+				);
+
+				throw erroBanco;
+			}
+
+            const primeiro = grupo[0];
+
+            const destino =
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + Math.max(...grupo.map(e => Number(e.id)));
+
+            return res.redirect(303, destino);
+        } catch (erro) {
+            console.error('Erro ao salvar comprovante:', erro.message);
+
+            return res.status(500).send(
+                'Não foi possível confirmar o salvamento. ' +
+                'Volte à rota e confira a lista de comprovantes antes de tentar novamente.'
+            );
+        }
+    }
+);
+
+app.post(
+    '/entregas/comprovantes-loja/:id/valor',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            if (
+                !/^\d+$/.test(String(req.params.id)) ||
+                !/^\d+$/.test(String(req.body.entrega_id))
+            ) {
+                return res.status(400).send('Identificação inválida.');
+            }
+
+            await prepararComprovantesRota();
+
+            const [registros] = await db.execute(`
+                SELECT id, pedidos_ids
+                FROM entregas_comprovantes_cloud
+                WHERE id = ?
+            `, [req.params.id]);
+
+            const comprovante = registros[0];
+            const grupo = await buscarGrupoConferenciaLoja(
+                req.body.entrega_id
+            );
+
+            if (!comprovante || !grupo?.length) {
+                return res.status(404).send('Comprovante ou entrega não encontrado.');
+            }
+
+            const vinculados = JSON.parse(comprovante.pedidos_ids);
+            const pertenceAoGrupo = grupo.some(e =>
+                vinculados.includes(String(e.id))
+            );
+
+            if (!pertenceAoGrupo) {
+                return res.status(400).send(
+                    'Este comprovante não pertence ao cliente selecionado.'
+                );
+            }
+
+            if (req.body.acao === 'ignorar') {
+                await db.execute(`
+                    UPDATE entregas_comprovantes_cloud
+                    SET leitura_status = 'ignorado'
+                    WHERE id = ?
+                `, [req.params.id]);
+            } else if (req.body.acao === 'salvar') {
+                const texto = String(req.body.valor || '').trim();
+
+                if (!/^\d{1,7}(?:[,.]\d{1,2})?$/.test(texto)) {
+                    return res.status(400).send(
+                        'Informe o valor sem separador de milhar. Exemplo: 1250,50.'
+                    );
+                }
+
+                const partes = texto.replace(',', '.').split('.');
+                const valor =
+                    Number(partes[0]) * 100 +
+                    Number((partes[1] || '').padEnd(2, '0'));
+
+                if (
+                    !Number.isSafeInteger(valor) ||
+                    valor <= 0 ||
+                    valor > 999999999
+                ) {
+                    return res.status(400).send('Valor inválido.');
+                }
+
+                await db.execute(`
+                    UPDATE entregas_comprovantes_cloud
+                    SET valor_centavos = ?, leitura_status = 'manual'
+                    WHERE id = ?
+                `, [valor, req.params.id]);
+            } else {
+                return res.status(400).send('Ação inválida.');
+            }
+
+            const primeiro = grupo[0];
+
+            return res.redirect(
+                303,
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + Math.max(...grupo.map(e => Number(e.id)))
+            );
+        } catch (erro) {
+            console.error(
+                'Erro ao corrigir valor do comprovante:',
+                erro.message
+            );
+
+            return res.status(500).send(
+                'Não foi possível confirmar a alteração. Volte e confira o valor.'
+            );
+        }
+    }
+);
+
+app.get(
+    '/entregas/comprovantes-loja/:id',
+    autenticarEntregas,
+    async (req, res) => {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(400).send('Comprovante inválido.');
+        }
+
+        try {
+            await prepararComprovantesRota();
+
+            const [registros] = await db.execute(`
+                SELECT tipo, public_id
+                FROM entregas_comprovantes_cloud
+                WHERE id = ?
+            `, [req.params.id]);
+
+            const comprovante = registros[0];
+
+            if (!comprovante) {
+                return res.status(404).send(
+                    'Comprovante não encontrado.'
+                );
+            }
+
+            const urlProtegida = cloudinary.url(
+                comprovante.public_id,
+                {
+                    resource_type: 'raw',
+                    type: 'authenticated',
+                    secure: true,
+                    sign_url: true
+                }
+            );
+
+            // O servidor busca o arquivo.
+            // O endereço assinado não é exposto no navegador.
+            const resposta = await axios.get(urlProtegida, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                maxContentLength: 5 * 1024 * 1024,
+                maxRedirects: 0
+            });
+
+            res.set({
+                'Content-Type': comprovante.tipo,
+                'Content-Disposition': 'inline',
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy':
+                    "sandbox; default-src 'none'"
+            });
+
+            return res.send(Buffer.from(resposta.data));
+        } catch (erro) {
+            // Não imprime o objeto Axios, pois contém a URL assinada.
+            console.error(
+                'Erro ao abrir comprovante no Cloudinary:',
+                erro.message
+            );
+
+            return res.status(502).send(
+                'Não foi possível abrir o comprovante. ' +
+                'Tente novamente em alguns instantes.'
+            );
+        }
+    }
+);
+
+app.post(
+    '/entregas/conferencia/cliente/:id/confirmar-pagamento',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        try {
+            const grupo = await buscarGrupoConferenciaLoja(req.params.id);
+
+            if (!grupo?.length) {
+                return res.status(404).send('Entrega não encontrada.');
+            }
+
+            const revisao = revisaoPagamentoLoja(grupo);
+
+            if (req.body.revisao !== revisao) {
+                return res.status(409).send(
+                    'Os dados deste cliente mudaram. ' +
+                    'Volte, atualize a página e confira novamente.'
+                );
+            }
+
+            await prepararConfirmacaoPagamentoLoja();
+
+            const valores = grupo.map(() => '(?, ?)').join(', ');
+            const parametros = grupo.flatMap(e => [
+                e.id,
+                revisao
+            ]);
+
+            await db.execute(`
+                INSERT INTO entregas_pagamentos_conferidos (
+                    entrega_id,
+                    revisao
+                )
+                VALUES ${valores}
+                ON DUPLICATE KEY UPDATE
+                    revisao = VALUES(revisao),
+                    confirmado_em = CURRENT_TIMESTAMP
+            `, parametros);
+
+            const primeiro = grupo[0];
+            const idCartao = Math.max(
+                ...grupo.map(e => Number(e.id))
+            );
+
+            return res.redirect(
+                303,
+                '/entregas/conferencia/rota' +
+                '?data=' + encodeURIComponent(primeiro.dia_grupo) +
+                '&horario=' + encodeURIComponent(primeiro.horario_rota) +
+                '&motoboy=' + encodeURIComponent(primeiro.motoboy) +
+                '#cliente-' + idCartao
+            );
+        } catch (erro) {
+            console.error(
+                'Erro ao confirmar pagamento na conferência:',
+                erro.message
+            );
+
+            return res.status(500).send(
+                'Não foi possível confirmar a gravação. ' +
+                'Volte e atualize a página para conferir.'
+            );
+        }
+    }
+);
+
+// ======================================================
+// CONFERÊNCIA DA LOJA
+// ======================================================
+
+app.get(
+    '/entregas/conferencia',
+    autenticarEntregas,
+    async (req, res) => {
+        const data = String(req.query.data || hojeEntregas());
+
+        if (!dataValidaEntregas(data)) {
+            return res.status(400).send('Data inválida.');
+        }
+
+        try {
+            const [resumo] = await db.execute(`
+                SELECT
+                    horario_rota,
+                    motoboy,
+                    COUNT(*) AS quantidade,
+
+                    SUM(
+						CASE
+							WHEN forma_pagamento = 'pix'
+								THEN total
+
+							WHEN forma_pagamento = 'dinheiro'
+								THEN COALESCE(valor_recebido_pix, 0)
+
+							ELSE 0
+						END
+					) AS pix,
+
+                    (
+						SUM(
+							CASE WHEN forma_pagamento = 'dinheiro'
+							THEN COALESCE(valor_recebido_dinheiro, total)
+							ELSE 0 END
+						)
+						+
+						SUM(COALESCE(dinheiro_conta_prazo, 0))
+					) AS dinheiro,
+
+					SUM(
+						CASE
+							WHEN forma_pagamento = 'conta_prazo'
+								 AND status_entrega = 'entregue'
+							THEN total
+							ELSE 0
+						END
+					) AS conta_prazo,
+
+                    SUM(
+						CASE
+							WHEN status_entrega = 'pendente'
+								 AND forma_pagamento = 'pendente'
+								THEN total
+
+							WHEN status_entrega = 'entregue'
+								 AND forma_pagamento = 'dinheiro'
+								THEN GREATEST(
+									total
+										- COALESCE(valor_recebido_dinheiro, total)
+										- COALESCE(valor_recebido_pix, 0),
+									0
+								)
+
+							ELSE 0
+						END
+					) AS pendente,
+
+                    SUM(
+                        CASE WHEN status_entrega = 'nao_entregue'
+                        THEN total ELSE 0 END
+                    ) AS nao_entregue
+
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                GROUP BY horario_rota, motoboy
+                ORDER BY horario_rota, motoboy
+            `, [data]);
+			
+			await prepararTabelaConferencia();
+
+			const [conferenciasSalvas] = await db.execute(`
+				SELECT horario_rota, motoboy, resultado
+				FROM conferencias_motoboy
+				WHERE data_rota = ?
+			`, [data]);
+
+			function chaveConferencia(horario, motoboy) {
+				return JSON.stringify([horario, motoboy]);
+			}
+
+			const resultadosConferencia = new Map(
+				conferenciasSalvas.map(c => [
+					chaveConferencia(c.horario_rota, c.motoboy),
+					c.resultado
+				])
+			);
+
+			function botoesConferencia(rota) {
+				const resultado = resultadosConferencia.get(
+					chaveConferencia(rota.horario_rota, rota.motoboy)
+				);
+
+				const texto = resultado === 'correta'
+					? '✓ Conferência correta'
+					: resultado === 'incorreta'
+						? '✕ Conferência incorreta'
+						: 'Ainda não conferida';
+
+				const cor = resultado === 'correta'
+					? '#4ade80'
+					: resultado === 'incorreta'
+						? '#ff4d4f'
+						: '#ccc';
+
+				return `
+					<div style="min-width: 0;">
+						<p style="
+							margin: 0 0 8px;
+							color: ${cor};
+							font-weight: bold;
+						">
+							${texto}
+						</p>
+
+						<form
+							method="post"
+							action="/entregas/conferencia/resultado"
+							style="display: flex; gap: 6px; margin: 0;"
+						>
+							${csrfEntregaCampo()}
+
+							<input type="hidden" name="data" value="${data}">
+
+							<input
+								type="hidden"
+								name="horario"
+								value="${escaparHtml(rota.horario_rota)}"
+							>
+
+							<input
+								type="hidden"
+								name="motoboy"
+								value="${escaparHtml(rota.motoboy)}"
+							>
+
+							<button
+								type="submit"
+								name="resultado"
+								value="correta"
+								aria-pressed="${resultado === 'correta'}"
+								style="
+									width: auto;
+									padding: 6px 10px;
+									font-size: 13px;
+									background: #166534;
+									color: white;
+									border: 2px solid ${
+										resultado === 'correta'
+											? '#4ade80'
+											: 'transparent'
+									};
+								"
+							>
+								Correta
+							</button>
+
+							<button
+								type="submit"
+								name="resultado"
+								value="incorreta"
+								aria-pressed="${resultado === 'incorreta'}"
+								style="
+									width: auto;
+									padding: 6px 10px;
+									font-size: 13px;
+									background: #991b1b;
+									color: white;
+									border: 2px solid ${
+										resultado === 'incorreta'
+											? '#ff4d4f'
+											: 'transparent'
+									};
+								"
+							>
+								Incorreta
+							</button>
+						</form>
+					</div>
+				`;
+			}
+			
+			const [coletasDaData] = await db.execute(`
+				SELECT
+					horario_rota,
+					motoboy,
+					pedido,
+					cliente,
+					coletar
+				FROM entregas_motoboy
+				WHERE data_rota = ?
+				  AND coletar IS NOT NULL
+				  AND TRIM(coletar) <> ''
+				ORDER BY horario_rota, motoboy, id
+			`, [data]);
+
+			const coletasPorRota = new Map();
+
+			for (const coleta of coletasDaData) {
+				const chave = JSON.stringify([
+					coleta.horario_rota,
+					coleta.motoboy
+				]);
+
+				if (!coletasPorRota.has(chave)) {
+					coletasPorRota.set(chave, []);
+				}
+
+				coletasPorRota.get(chave).push(coleta);
+			}
+
+			function mostrarColetasResumo(rota) {
+				const chave = JSON.stringify([
+					rota.horario_rota,
+					rota.motoboy
+				]);
+
+				const coletas = coletasPorRota.get(chave) || [];
+
+				if (!coletas.length) {
+					return '—';
+				}
+
+				return `
+					<div style="
+						display: flex;
+						flex-wrap: wrap;
+						gap: 6px 12px;
+					">
+						${coletas.map(coleta => `
+							<span style="
+								color: #f1c40f;
+								font-size: 14px;
+								overflow-wrap: anywhere;
+								min-width: 0;
+							">${escaparHtml(coleta.coletar)}</span>
+						`).join('-')}
+					</div>
+				`;
+			}
+
+            const linhas = resumo.map(r => `
+                <tr>
+                    <td>${escaparHtml(r.horario_rota)}</td>
+                    <td>${escaparHtml(r.motoboy)}</td>
+                    <td>${Number(r.quantidade)}</td>
+                    <td>${moedaEntregas(r.pix)}</td>
+                    <td>
+                        <strong>${moedaEntregas(r.dinheiro)}</strong>
+                    </td>
+                    <td style="${
+						Number(r.pendente) > 0
+							? 'color: #ff4d4f; font-weight: bold;'
+							: ''
+					}">
+						${moedaEntregas(r.pendente)}
+					</td>
+					<td>${moedaEntregas(r.conta_prazo)}</td>
+                    <td>${moedaEntregas(r.nao_entregue)}</td>
+					<td style="min-width: 180px; max-width: 300px;">
+						${mostrarColetasResumo(r)}
+					</td>
+					<td>
+						${botoesConferencia(r)}
+
+						<a
+							href="/entregas/conferencia/rota?data=${encodeURIComponent(data)}&horario=${encodeURIComponent(r.horario_rota)}&motoboy=${encodeURIComponent(r.motoboy)}"
+							style="
+								display: inline-block;
+								margin-top: 12px;
+								padding: 9px 12px;
+								background: #444;
+								color: white;
+								border-radius: 7px;
+								text-decoration: none;
+								font-weight: bold;
+							"
+						>
+							Conferir rota
+						</a>
+					</td>
+                </tr>
+            `).join('');
+			
+			const [pedidosConferencia] = await db.execute(`
+				SELECT
+					id,
+					horario_rota,
+					motoboy,
+					pedido,
+					cliente,
+					total,
+					status_entrega,
+					forma_pagamento,
+					pix_confirmado_atendente,
+					valor_recebido_pix,
+					valor_recebido_dinheiro
+				FROM entregas_motoboy
+				WHERE data_rota = ?
+				ORDER BY id DESC
+			`, [data]);
+			
+			function pagamentoNaConferencia(entrega) {
+				if (
+					entrega.total !== null &&
+					entrega.total !== undefined &&
+					Number(entrega.total) === 0 &&
+					entrega.status_entrega === 'entregue'
+				) {
+					return 'Troca';
+				}
+			
+				if (pixConfirmadoPeloAtendente(entrega)) {
+					return 'PIX — confirmado pelo atendente';
+				}
+
+				if (entrega.forma_pagamento === 'conta_prazo') {
+					return 'Conta a prazo';
+				}
+
+				if (entrega.forma_pagamento === 'pix') {
+					return 'PIX';
+				}
+
+				if (entrega.forma_pagamento === 'dinheiro') {
+					const pix = Number(entrega.valor_recebido_pix || 0);
+
+					const dinheiro = Number(
+						entrega.valor_recebido_dinheiro ?? entrega.total ?? 0
+					);
+
+					if (pix > 0 && dinheiro > 0) {
+						return 'PIX + Dinheiro';
+					}
+
+					if (pix > 0) {
+						return 'PIX';
+					}
+
+					if (dinheiro > 0) {
+						return 'Dinheiro';
+					}
+				}
+
+				return 'Não informado';
+			}
+			
+			await gcPrepararHistorico();
+
+			const [baixasConfirmadasGC] = await db.execute(`
+				SELECT entrega_id
+				FROM entregas_gc_baixas
+				WHERE status = 'confirmado'
+			`);
+
+			const entregasConfirmadasGC = new Set(
+				baixasConfirmadasGC.map(baixa => String(baixa.entrega_id))
+			);
+
+			const linhasPedidosConferencia = pedidosConferencia.map(e => `
+				<tr>
+					<td>${escaparHtml(e.horario_rota)}</td>
+					<td>${escaparHtml(e.motoboy)}</td>
+					<td>${escaparHtml(e.pedido || '—')}</td>
+					<td>${escaparHtml(e.cliente)}</td>
+					<td>${moedaEntregas(e.total)}</td>
+
+					<td>
+						<strong>
+							${escaparHtml(pagamentoNaConferencia(e))}
+						</strong>
+					</td>
+
+					<td>
+						${entregasConfirmadasGC.has(String(e.id)) ? `
+							<span style="
+								display: inline-block;
+								color: #4ade80;
+								font-weight: bold;
+								margin-bottom: 6px;
+							">
+								✓ Confirmado no GestãoClick
+							</span>
+						` : e.forma_pagamento === 'conta_prazo' ? `
+							<span style="
+								display: inline-block;
+								color: #aaa;
+								margin-bottom: 6px;
+							">
+								Conta a prazo — conferência manual
+							</span>
+						` : ``}
+					
+						<form
+							method="post"
+							action="/entregas/${e.id}/excluir"
+							onsubmit="return confirm('Excluir esta entrega definitivamente? Ela também será removida dos totais da conferência.');"
+						>
+							${csrfEntregaCampo()}
+
+							<input
+								type="hidden"
+								name="data"
+								value="${data}"
+							>
+
+							<button
+								type="submit"
+								style="background: #c62828; color: white;"
+							>
+								Excluir entrega
+							</button>
+						</form>
+					</td>
+				</tr>
+			`).join('');
+
+            res.send(paginaEntregas('Conferência de entregas', `
+			<style>
+				/* Aproveita melhor a largura da tela nesta página */
+				main {
+					max-width: 1600px;
+					width: 100%;
+					min-width: 0;
+				}
+
+				.tabela {
+					width: 100%;
+					overflow-x: auto;
+				}
+
+				.tabela th,
+				.tabela td {
+					padding: 10px 8px;
+					font-size: 14px;
+				}
+
+				/* Permite que textos e botões da conferência se ajustem */
+				.tabela td:last-child > div {
+					min-width: 0 !important;
+				}
+
+				.tabela td:last-child form {
+					flex-wrap: wrap;
+				}
+
+				.tabela td:last-child p {
+					white-space: normal;
+					overflow-wrap: anywhere;
+				}
+
+				/* Limita a largura ocupada pelas peças para coletar */
+				.tabela td:nth-child(9) {
+					max-width: 230px;
+					overflow-wrap: anywhere;
+				}
+			</style>
+                <section>
+                    <form method="get">
+                        <label>Data</label>
+                        <input
+                            type="date"
+                            name="data"
+                            value="${data}"
+                            required
+                        >
+                        <br><br>
+                        <button>Atualizar conferência</button>
+                    </form>
+                </section>
+
+                <section>
+                    <div class="tabela">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Rota</th>
+                                    <th>Motoboy</th>
+                                    <th>Entregas</th>
+                                    <th>PIX informado</th>
+                                    <th>Dinheiro a trazer</th>
+                                    <th>Sem marcação</th>
+									<th>Conta a prazo</th>
+                                    <th>Não entregue</th>
+									<th>Coletas</th>
+									<th>Conferência</th>
+                                </tr>
+                            </thead>
+
+                            <tbody>
+                                ${linhas || `
+                                    <tr>
+                                        <td colspan="10">
+                                            Nenhuma entrega nesta data.
+                                        </td>
+                                    </tr>
+                                `}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p class="aviso">
+                        Os valores refletem as marcações dos motoboys.
+                        Confira os PIX no banco.
+                    </p>
+                </section>
+				
+				<section>
+					<h2>Gerenciar entregas</h2>
+
+					<style>
+						.tabela-gerenciar-entregas th,
+						.tabela-gerenciar-entregas td {
+							padding: 5px 8px;
+							font-size: 14px;
+						}
+
+						.tabela-gerenciar-entregas form {
+							margin: 0;
+						}
+
+						.tabela-gerenciar-entregas button {
+							width: auto;
+							padding: 5px 10px;
+							font-size: 13px;
+							border-radius: 5px;
+						}
+					</style>
+
+					<div class="tabela tabela-gerenciar-entregas">
+						<table>
+							<thead>
+								<tr>
+									<th>Rota</th>
+									<th>Motoboy</th>
+									<th>Pedido</th>
+									<th>Cliente</th>
+									<th>Valor</th>
+									<th>Pagamento</th>
+									<th>Ação</th>
+								</tr>
+							</thead>
+
+							<tbody>
+								${linhasPedidosConferencia || `
+									<tr>
+										<td colspan="7">
+											Nenhuma entrega nesta data.
+										</td>
+									</tr>
+								`}
+							</tbody>
+						</table>
+					</div>
+				</section>
+
+                <p>
+                    <a href="/entregas/painel">
+						Voltar ao painel
+					</a>
+                </p>
+            `));
+        } catch (erro) {
+            console.error('Erro na conferência de entregas:', erro);
+            res.status(500).send('Não foi possível abrir a conferência.');
+        }
+    }
+);
+
+// ======================================================
+// EXCLUIR ENTREGA — SOMENTE ADMINISTRADOR
+// ======================================================
+
+app.post(
+    '/entregas/:id/excluir',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const id = String(req.params.id || '');
+        const data = String(req.body.data || '');
+
+        if (!/^\d+$/.test(id) || !dataValidaEntregas(data)) {
+            return res.status(400).send('Dados inválidos.');
+        }
+
+        try {
+            const [resultado] = await db.execute(`
+                DELETE FROM entregas_motoboy
+                WHERE id = ?
+                  AND data_rota = ?
+            `, [id, data]);
+
+            if (!resultado.affectedRows) {
+                return res.status(404).send(
+                    'Entrega não encontrada ou já excluída.'
+                );
+            }
+
+            res.redirect(
+                303,
+                '/entregas/conferencia?data=' + encodeURIComponent(data)
+            );
+        } catch (erro) {
+            console.error('Erro ao excluir entrega:', erro);
+
+            res.status(500).send(
+                'Não foi possível excluir a entrega.'
+            );
+        }
+    }
+);
+
+// ======================================================
+// RESULTADO DA CONFERÊNCIA POR ROTA
+// ======================================================
+
+let tabelaConferenciaPronta = null;
+
+function prepararTabelaConferencia() {
+    if (!tabelaConferenciaPronta) {
+        tabelaConferenciaPronta = db.execute(`
+            CREATE TABLE IF NOT EXISTS conferencias_motoboy (
+                data_rota DATE NOT NULL,
+                horario_rota VARCHAR(5) NOT NULL,
+                motoboy VARCHAR(100) NOT NULL,
+
+                resultado ENUM(
+                    'correta',
+                    'incorreta'
+                ) NOT NULL,
+
+                atualizado_em DATETIME NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    data_rota,
+                    horario_rota,
+                    motoboy
+                )
+            )
+        `).catch(erro => {
+            tabelaConferenciaPronta = null;
+            throw erro;
+        });
+    }
+
+    return tabelaConferenciaPronta;
+}
+
+app.post(
+    '/entregas/conferencia/resultado',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const data = String(req.body.data || '');
+        const horario = String(req.body.horario || '');
+        const motoboy = textoEntrega(req.body.motoboy, 100);
+        const resultado = String(req.body.resultado || '');
+
+        if (
+            !dataValidaEntregas(data) ||
+            !HORARIOS_ENTREGA.includes(horario) ||
+            !motoboy ||
+            !['correta', 'incorreta'].includes(resultado)
+        ) {
+            return res.status(400).send('Dados inválidos.');
+        }
+
+        try {
+            await prepararTabelaConferencia();
+
+            const [rotas] = await db.execute(`
+                SELECT id
+                FROM entregas_motoboy
+                WHERE data_rota = ?
+                  AND horario_rota = ?
+                  AND motoboy = ?
+                LIMIT 1
+            `, [data, horario, motoboy]);
+
+            if (!rotas.length) {
+                return res.status(404).send('Rota não encontrada.');
+            }
+
+            await db.execute(`
+                INSERT INTO conferencias_motoboy (
+                    data_rota,
+                    horario_rota,
+                    motoboy,
+                    resultado
+                )
+                VALUES (?, ?, ?, ?)
+
+                ON DUPLICATE KEY UPDATE
+                    resultado = ?,
+                    atualizado_em = CURRENT_TIMESTAMP
+            `, [
+                data,
+                horario,
+                motoboy,
+                resultado,
+                resultado
+            ]);
+
+            res.redirect(
+                303,
+                '/entregas/conferencia?data=' + encodeURIComponent(data)
+            );
+        } catch (erro) {
+            console.error('Erro ao salvar conferência:', erro);
+
+            res.status(500).send(
+                'Não foi possível salvar a conferência.'
+            );
+        }
+    }
+);
+
+// ======================================================
+// VALOR EFETIVAMENTE RECEBIDO EM DINHEIRO
+// ======================================================
+
+let colunaDinheiroPronta = null;
+
+function prepararColunaDinheiro() {
+    if (!colunaDinheiroPronta) {
+        colunaDinheiroPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'valor_recebido_dinheiro'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN valor_recebido_dinheiro
+                            DECIMAL(10,2) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    // Outra instância pode ter criado a coluna.
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaDinheiroPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaDinheiroPronta;
+}
+
+let colunaColetaPronta = null;
+
+function prepararColunaColeta() {
+    if (!colunaColetaPronta) {
+        colunaColetaPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'coletar'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN coletar TEXT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaColetaPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaColetaPronta;
+}
+
+// ======================================================
+// ENVIAR ROTA AO WHATSAPP DO MOTOBOY
+// ======================================================
+
+const telefonesMotoboys = new Map([
+    ['diogo', '555191625679'],
+	['fabricio', '555181056096'],
+    ['kaue', '555195891400']
+]);
+
+const enviosRotasEmAndamento = new Set();
+
+app.post(
+    '/entregas/enviar-rota',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    async (req, res) => {
+        const codigo = String(req.body.codigo || '');
+
+        if (!/^[a-f0-9-]{36}$/.test(codigo)) {
+            return res.status(400).send('Código de rota inválido.');
+        }
+
+        if (enviosRotasEmAndamento.has(codigo)) {
+            return res.status(409).send(
+                'Esta rota já está sendo enviada. Aguarde.'
+            );
+        }
+
+        enviosRotasEmAndamento.add(codigo);
+
+        try {
+            const [entregas] = await db.execute(`
+				SELECT
+					pedido,
+					motoboy,
+					horario_rota,
+					DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+					DATE_FORMAT(data_rota, '%Y-%m-%d') AS data_painel
+				FROM entregas_motoboy
+				WHERE codigo_acesso = ?
+				ORDER BY id
+			`, [codigo]);
+
+            if (!entregas.length) {
+                return res.status(404).send(
+                    'Esta rota não possui entregas.'
+                );
+            }
+
+            const rota = entregas[0];
+
+            // Confirma que o link pertence a uma única rota.
+            const rotaInconsistente = entregas.some(e =>
+                e.motoboy !== rota.motoboy ||
+                e.horario_rota !== rota.horario_rota ||
+                e.data_painel !== rota.data_painel
+            );
+
+            if (rotaInconsistente) {
+                return res.status(409).send(
+                    'O link está associado a rotas diferentes. ' +
+                    'Confira os cadastros antes de enviar.'
+                );
+            }
+
+            const nomeNormalizado = rota.motoboy
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .trim()
+                .toLowerCase();
+
+            const telefone = telefonesMotoboys.get(nomeNormalizado);
+
+            if (!telefone) {
+                return res.status(400).send(
+                    'Não existe telefone configurado para este motoboy.'
+                );
+            }
+
+            const enderecoConfigurado =
+                String(process.env.URL_PUBLICA_BOT || '').trim();
+
+            let enderecoBase;
+
+            try {
+                enderecoBase = new URL(enderecoConfigurado);
+
+                if (
+                    enderecoBase.protocol !== 'https:' ||
+                    enderecoBase.username ||
+                    enderecoBase.password
+                ) {
+                    throw new Error('Endereço inválido');
+                }
+            } catch (erro) {
+                return res.status(503).send(
+                    'Configure URL_PUBLICA_BOT no Railway ' +
+                    'com o endereço HTTPS do seu bot.'
+                );
+            }
+
+            if (!client.info) {
+                return res.status(503).send(
+                    'O WhatsApp do bot ainda não está conectado.'
+                );
+            }
+
+            const destinatario = await client.getNumberId(telefone);
+
+            if (!destinatario) {
+                return res.status(400).send(
+                    'O número informado para este motoboy ' +
+                    'não foi encontrado no WhatsApp. Confira o cadastro.'
+                );
+            }
+
+            const link = new URL(
+                '/entregas/motoboy/' + encodeURIComponent(codigo),
+                enderecoBase.origin
+            ).href;
+
+            const numerosPedidos = entregas
+				.map(e => String(e.pedido || '').trim())
+				.filter(Boolean)
+				.join(', ');
+
+			const mensagem = [
+				`🛵 *Sua rota de entregas — ${rota.motoboy}*`,
+				'',
+				`📅 Data: ${rota.data_formatada}`,
+				`⏰ Rota: ${rota.horario_rota}`,
+				`📦 Entregas: ${entregas.length}`,
+				`🧾 Pedidos: ${numerosPedidos || 'Não informados'}`,
+				'',
+				'Abra o link para visualizar os clientes e registrar os pagamentos:',
+				link
+			].join('\n');
+
+            await client.sendMessage(
+                destinatario._serialized,
+                mensagem
+            );
+
+            console.log(
+                `✅ Rota ${rota.horario_rota} enviada para ${rota.motoboy}.`
+            );
+
+            return res.send(
+                paginaEntregas('Rota enviada', `
+                    <section>
+                        <p>
+                            Mensagem enviada para
+                            <strong>${escaparHtml(rota.motoboy)}</strong>.
+                        </p>
+
+                        <p>
+                            Rota das ${escaparHtml(rota.horario_rota)}
+                            de ${escaparHtml(rota.data_formatada)}.
+                        </p>
+
+                        <a href="/entregas/painel?data=${encodeURIComponent(rota.data_painel)}">
+                            Voltar ao painel
+                        </a>
+                    </section>
+                `)
+            );
+        } catch (erro) {
+            console.error('Erro ao enviar rota pelo WhatsApp:', erro);
+
+            return res.status(500).send(
+                'Não foi possível confirmar o envio. ' +
+                'Confira a conversa no WhatsApp antes de tentar novamente.'
+            );
+        } finally {
+            enviosRotasEmAndamento.delete(codigo);
+        }
+    }
+);
+
+let colunaPixAtendentePronta = null;
+
+function prepararColunaPixAtendente() {
+    if (!colunaPixAtendentePronta) {
+        colunaPixAtendentePronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'pix_confirmado_atendente'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN pix_confirmado_atendente
+                            TINYINT(1) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaPixAtendentePronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaPixAtendentePronta;
+}
+
+function pixConfirmadoPeloAtendente(entrega) {
+    if (Number(entrega.pix_confirmado_atendente) === 1) {
+        return true;
+    }
+
+    // Compatibilidade com pedidos antigos que hoje mostram o aviso.
+    return entrega.pix_confirmado_atendente == null &&
+        entrega.forma_pagamento === 'pix' &&
+        entrega.status_entrega === 'pendente';
+}
+
+let colunaPixParcialPronta = null;
+
+function prepararColunaPixParcial() {
+    if (!colunaPixParcialPronta) {
+        colunaPixParcialPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+                  AND COLUMN_NAME = 'valor_recebido_pix'
+            `);
+
+            if (!colunas.length) {
+                try {
+                    await db.execute(`
+                        ALTER TABLE entregas_motoboy
+                        ADD COLUMN valor_recebido_pix
+                            DECIMAL(10,2) NULL DEFAULT NULL
+                    `);
+                } catch (erro) {
+                    if (erro.code !== 'ER_DUP_FIELDNAME') {
+                        throw erro;
+                    }
+                }
+            }
+        })().catch(erro => {
+            colunaPixParcialPronta = null;
+            throw erro;
+        });
+    }
+
+    return colunaPixParcialPronta;
+}
+
+// ======================================================
+// CONTA A PRAZO NAS ENTREGAS
+// Não altera movimentacoes_conta_prazo.
+// ======================================================
+
+let estruturaPrazoEntregasPronta = null;
+
+function prepararPrazoEntregas() {
+    if (!estruturaPrazoEntregasPronta) {
+        estruturaPrazoEntregasPronta = (async () => {
+            await prepararTabelaEntregas();
+
+            const [colunas] = await db.execute(`
+                SELECT COLUMN_NAME, COLUMN_TYPE
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'entregas_motoboy'
+            `);
+
+            const nomes = new Set(
+                colunas.map(c => c.COLUMN_NAME)
+            );
+
+            const novasColunas = [
+                [
+                    'cliente_conta_prazo_id',
+                    'INT NULL DEFAULT NULL'
+                ],
+                [
+                    'dinheiro_conta_prazo',
+                    'DECIMAL(10,2) NOT NULL DEFAULT 0'
+                ]
+            ];
+
+            for (const [nome, definicao] of novasColunas) {
+                if (!nomes.has(nome)) {
+                    try {
+                        await db.execute(
+                            'ALTER TABLE entregas_motoboy ' +
+                            'ADD COLUMN ' + nome + ' ' + definicao
+                        );
+                    } catch (erro) {
+                        if (erro.code !== 'ER_DUP_FIELDNAME') {
+                            throw erro;
+                        }
+                    }
+                }
+            }
+
+            const pagamento = colunas.find(
+                c => c.COLUMN_NAME === 'forma_pagamento'
+            );
+
+            if (
+                pagamento &&
+                !pagamento.COLUMN_TYPE.includes("'conta_prazo'")
+            ) {
+                await db.execute(`
+                    ALTER TABLE entregas_motoboy
+                    MODIFY COLUMN forma_pagamento ENUM(
+                        'pendente',
+                        'pix',
+                        'dinheiro',
+                        'conta_prazo'
+                    ) NOT NULL DEFAULT 'pendente'
+                `);
+            }
+        })().catch(erro => {
+            estruturaPrazoEntregasPronta = null;
+            throw erro;
+        });
+    }
+
+    return estruturaPrazoEntregasPronta;
+}
+
+async function carregarContasPrazoAtivas(executor = db) {
+    const [clientes] = await executor.execute(`
+        SELECT id, nome, telefone
+        FROM clientes_conta_prazo
+        WHERE ativo = 1
+    `);
+
+    return clientes;
+}
+
+function localizarContaPrazo(clientes, telefone) {
+    const numero = normalizarTelefoneConta(telefone);
+
+    if (!numero) {
+        return null;
+    }
+
+    const encontrados = clientes.filter(cliente =>
+        normalizarTelefoneConta(cliente.telefone) === numero
+    );
+
+    // Não escolhe silenciosamente entre cadastros duplicados.
+    if (encontrados.length > 1) {
+        throw new Error(
+            'Existe mais de um cliente ativo com o mesmo telefone ' +
+            'na conta a prazo. Confira os cadastros.'
+        );
+    }
+
+    return encontrados[0] || null;
+}
+
+function opcoesEntregaPrazo(entrega) {
+    return `
+        <p style="color: #f1c40f; margin: 0;">
+            Cliente autorizado a comprar a prazo.
+        </p>
+
+        <button
+            name="acao"
+            value="conta_prazo"
+            class="pix"
+        >
+            Entregue — conta a prazo
+        </button>
+
+        <button
+            name="acao"
+            value="nao_entregue"
+            class="cinza"
+        >
+            Não entregue
+        </button>
+
+        <div style="
+            padding: 12px;
+            border: 1px solid #666;
+            border-radius: 8px;
+        ">
+            <label for="recebimento-prazo-${entrega.id}">
+                Dinheiro recebido para abater do saldo
+            </label>
+
+            <input
+                id="recebimento-prazo-${entrega.id}"
+                name="dinheiro_prazo"
+                type="text"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="Ex.: 50,00"
+                value="${
+                    Number(entrega.dinheiro_conta_prazo) > 0
+                        ? Number(entrega.dinheiro_conta_prazo)
+                            .toFixed(2).replace('.', ',')
+                        : ''
+                }"
+            >
+
+            <button
+                name="acao"
+                value="recebimento_prazo"
+                class="dinheiro"
+                style="margin-top: 10px;"
+            >
+                Salvar dinheiro recebido
+            </button>
+
+            <p style="color: #4ade80; font-weight: bold;">
+                Registrado:
+                ${moedaEntregas(entrega.dinheiro_conta_prazo)}
+            </p>
+        </div>
+    `;
+}
+
+// ======================================================
+// AGRUPAMENTO DAS ENTREGAS NA TELA DO MOTOBOY
+// ======================================================
+
+function textoChaveGrupo(valor) {
+    return String(valor ?? '')
+        .normalize('NFC')
+        .trim()
+        .toLocaleLowerCase('pt-BR')
+        .replace(/\s+/g, ' ');
+}
+
+function chaveGrupoEntrega(e) {
+    const telefone = normalizarTelefoneConta(e.telefone);
+    const endereco = textoChaveGrupo(e.endereco);
+
+    // Sem identificação suficiente, mantém o pedido separado.
+    if (!telefone || !endereco) {
+        return JSON.stringify(['individual', String(e.id)]);
+    }
+
+    return JSON.stringify([
+        e.codigo_acesso,
+        e.dia_grupo,
+        e.horario_rota,
+        textoChaveGrupo(e.motoboy),
+        telefone,
+        endereco,
+        textoChaveGrupo(e.cidade)
+    ]);
+}
+
+function agruparEntregasMotoboy(entregas) {
+    const grupos = new Map();
+
+    for (const entrega of entregas) {
+        const chave = chaveGrupoEntrega(entrega);
+
+        if (!grupos.has(chave)) {
+            grupos.set(chave, []);
+        }
+
+        grupos.get(chave).push(entrega);
+    }
+
+    return Array.from(grupos.values());
+}
+
+function centavosGrupo(valor) {
+    return Math.round(Number(valor || 0) * 100);
+}
+
+function somaGrupo(entregas, campo) {
+    return entregas.reduce(
+        (soma, e) => soma + centavosGrupo(e[campo]),
+        0
+    );
+}
+
+function revisaoGrupoEntrega(entregas) {
+    // Detecta inclusão, exclusão ou alteração dos pedidos.
+    const dados = entregas.map(e => [
+        String(e.id),
+        chaveGrupoEntrega(e),
+        e.pedido,
+        e.cliente,
+        e.total,
+        e.coletar,
+        e.status_entrega,
+        e.forma_pagamento,
+        e.pix_confirmado_atendente,
+        e.valor_recebido_pix,
+        e.valor_recebido_dinheiro,
+        e.cliente_conta_prazo_id,
+        e.dinheiro_conta_prazo,
+        e.atualizado_em
+    ]);
+
+    return cryptoEntregas
+        .createHash('sha256')
+        .update(JSON.stringify(dados))
+        .digest('hex');
+}
+
+function estadoGrupoEntrega(entregas) {
+    if (entregas.every(e => e.status_entrega === 'entregue')) {
+        return 'entregue';
+    }
+
+    if (entregas.every(e => e.status_entrega === 'nao_entregue')) {
+        return 'nao_entregue';
+    }
+
+    return 'pendente';
+}
+
+function erroGrupoEntrega(mensagem, status = 400) {
+    const erro = new Error(mensagem);
+    erro.status = status;
+    return erro;
+}
+
+function distribuirPagamentoGrupo(entregas, pix, dinheiro) {
+    // Distribuição determinística na ordem dos pedidos.
+    // O valor excedente fica no último pedido do grupo.
+    return entregas.map((e, indice) => {
+        const total = centavosGrupo(e.total);
+
+        let partePix = Math.min(pix, total);
+        pix -= partePix;
+
+        let parteDinheiro = Math.min(
+            dinheiro,
+            total - partePix
+        );
+
+        dinheiro -= parteDinheiro;
+
+        if (indice === entregas.length - 1) {
+            partePix += pix;
+            parteDinheiro += dinheiro;
+        }
+
+        if (
+            partePix > 9999999999 ||
+            parteDinheiro > 9999999999
+        ) {
+            throw erroGrupoEntrega(
+                'O valor informado ultrapassa o limite permitido.'
+            );
+        }
+
+        return {
+            entrega: e,
+            pix: partePix,
+            dinheiro: parteDinheiro
+        };
+    });
+}
+
+// ======================================================
+// API - COMPROVANTES INFINITEPAY PENDENTES
+// ======================================================
+
+app.get('/api/comprovantes-infinitepay/pendentes', async (req, res) => {
+	try {
+
+		const [links] = await db.execute(`
+			SELECT
+				id,
+				url,
+				telefone,
+				data_recebimento
+			FROM comprovantes_pix_links
+			WHERE processado = 0
+			ORDER BY id ASC
+		`);
+
+		res.json({
+			sucesso: true,
+			total: links.length,
+			links: links
+		});
+
+	} catch (erro) {
+
+		console.error(
+			'❌ Erro ao buscar comprovantes InfinitePay:',
+			erro
+		);
+
+		res.status(500).json({
+			sucesso: false,
+			erro: 'Erro ao buscar comprovantes'
+		});
+	}
+});
+
+
+// ======================================================
+// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADOO
+// ======================================================
+
+app.post('/api/comprovantes-infinitepay/:id/processado', async (req, res) => {
+	try {
+
+		const id = Number(req.params.id);
+
+		const {
+			status,
+			pagador,
+			valor
+		} = req.body;
+
+		if (!id) {
+			return res.status(400).json({
+				sucesso: false,
+				erro: 'ID inválido'
+			});
+		}
+
+		await db.execute(
+			`
+			UPDATE comprovantes_pix_links
+			SET
+				processado = 1,
+				status = ?,
+				pagador = ?,
+				valor = ?,
+				processado_em = NOW()
+			WHERE id = ?
+			`,
+			[
+				status || null,
+				pagador || null,
+				valor ?? null,
+				id
+			]
+		);
+
+		res.json({
+			sucesso: true
+		});
+
+	} catch (erro) {
+
+		console.error(
+			'❌ Erro ao atualizar comprovante InfinitePay:',
+			erro
+		);
+
+		res.status(500).json({
+			sucesso: false,
+			erro: 'Erro ao atualizar comprovante'
+		});
+	}
+});
+
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
+
+app.get(
+    '/entregas/teste-recebimento/:id',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const id = String(req.params.id || '').trim();
+
+            if (!/^\d+$/.test(id)) {
+                return res.status(400).json({
+                    erro: 'ID inválido.'
+                });
+            }
+
+            const config = gcConfiguracao();
+
+            const resposta = await gcApi(
+                'GET',
+                '/recebimentos/' + encodeURIComponent(id),
+                { loja_id: config.GESTAOCLICK_LOJA_ID }
+            );
+
+            const r = resposta.data;
+			
+			const lista = await gcListar('/recebimentos', {
+				loja_id: config.GESTAOCLICK_LOJA_ID,
+				cliente_id: r.cliente_id,
+				data_inicio: '2026-10-01',
+				data_fim: '2026-11-30'
+			});
+
+			const encontradoNaLista = lista.find(item =>
+				String(item.id) === id
+			);
+
+            if (!r || String(r.id) !== id) {
+                return res.status(404).json({
+                    erro: 'A API não retornou o recebimento solicitado.'
+                });
+            }
+
+            return res.json({
+                aviso: 'Consulta somente. Nenhum dado foi alterado.',
+                loja_configurada: config.GESTAOCLICK_LOJA_ID,
+				diagnostico_listagem: {
+					quantidade_retornada: lista.length,
+					encontrou_id: Boolean(encontradoNaLista),
+					registro_encontrado: encontradoNaLista
+						? {
+							id: encontradoNaLista.id,
+							descricao: encontradoNaLista.descricao,
+							cliente_id: encontradoNaLista.cliente_id,
+							loja_id: encontradoNaLista.loja_id
+						}
+						: null
+				},
+                recebimento: {
+                    id: r.id,
+                    descricao: r.descricao,
+                    cliente_id: r.cliente_id,
+                    nome_cliente: r.nome_cliente,
+                    loja_id: r.loja_id,
+                    nome_loja: r.nome_loja,
+                    valor: r.valor,
+                    valor_total: r.valor_total,
+                    liquidado: r.liquidado,
+                    forma_pagamento_id: r.forma_pagamento_id,
+                    nome_forma_pagamento: r.nome_forma_pagamento,
+                    data_vencimento: r.data_vencimento,
+                    data_liquidacao: r.data_liquidacao
+                }
+            });
+        } catch (erro) {
+            return res.status(502).json({
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.get(
+    '/entregas/teste-api-pagamento/:pedido',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const codigo = String(req.params.pedido || '').trim();
+
+            if (!/^\d+$/.test(codigo)) {
+                return res.status(400).json({
+                    erro: 'Número de pedido inválido.'
+                });
+            }
+
+            const config = gcConfiguracao();
+
+            const vendas = (
+                await gcListar('/vendas', {
+                    codigo,
+                    loja_id: config.GESTAOCLICK_LOJA_ID,
+                    tipo: 'vendas_balcao'
+                })
+            ).filter(venda => String(venda.codigo) === codigo);
+
+            if (vendas.length !== 1) {
+                return res.status(409).json({
+                    erro: 'Não foi encontrada uma única venda.',
+                    quantidade: vendas.length
+                });
+            }
+
+            const venda = vendas[0];
+
+            // Busca pela loja, incluindo recebimentos sem cliente
+            // vinculado e recebimentos já liquidados.
+            const recebimentos = await gcListar('/recebimentos', {
+				loja_id: config.GESTAOCLICK_LOJA_ID,
+				...gcPeriodoRecebimentos(venda)
+			});
+
+            const vinculadosPorDescricao = recebimentos.filter(r => {
+                const referencia = String(r.descricao || '')
+                    .trim()
+                    .match(
+                        /^Venda de n[º°o]\s*(\d+)(?:\s*\(\s*\d+\s*\/\s*\d+\s*\))?$/i
+                    );
+
+                return (
+                    referencia?.[1] === codigo &&
+                    String(r.loja_id) ===
+                        config.GESTAOCLICK_LOJA_ID
+                );
+            });
+
+            return res.json({
+                aviso: 'Consulta somente. Nenhum dado foi alterado.',
+                loja_configurada: config.GESTAOCLICK_LOJA_ID,
+                formas_configuradas: {
+                    pix: config.GESTAOCLICK_FORMA_PIX_ID,
+                    dinheiro: config.GESTAOCLICK_FORMA_DINHEIRO_ID
+                },
+                venda: {
+                    id: venda.id,
+                    codigo: venda.codigo,
+                    cliente_id: venda.cliente_id,
+                    nome_cliente: venda.nome_cliente,
+                    loja_id: venda.loja_id,
+                    nome_loja: venda.nome_loja,
+                    data: venda.data,
+                    situacao_id: venda.situacao_id,
+                    situacao_financeiro: venda.situacao_financeiro,
+                    valor_total: venda.valor_total,
+                    condicao_pagamento: venda.condicao_pagamento,
+                    pagamentos: venda.pagamentos
+                },
+                recebimentos: vinculadosPorDescricao.map(r => ({
+                    id: r.id,
+                    descricao: r.descricao,
+                    cliente_id: r.cliente_id,
+                    loja_id: r.loja_id,
+                    valor: r.valor,
+                    valor_total: r.valor_total,
+                    liquidado: r.liquidado,
+                    forma_pagamento_id: r.forma_pagamento_id,
+                    nome_forma_pagamento: r.nome_forma_pagamento,
+                    conta_bancaria_id: r.conta_bancaria_id,
+                    plano_contas_id: r.plano_contas_id,
+                    data_vencimento: r.data_vencimento,
+                    data_competencia: r.data_competencia
+                }))
+            });
+        } catch (erro) {
+            console.error(
+                'Erro na consulta de teste GestãoClick:',
+                erro.message
+            );
+
+            return res.status(502).json({
+                erro: erro.message
+            });
+        }
+    }
+);
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 API de cupons ativa na porta ${PORT}`);
+});
