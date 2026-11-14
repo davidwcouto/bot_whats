@@ -6271,8 +6271,24 @@ app.get(
                         Abrir conferência desta data
                     </a>
                 </p>
-				<script>
-				(function () {
+
+                <script>
+                    window.addEventListener('pageshow', function () {
+                        document.querySelectorAll(
+                            'form[action="/entregas/enviar-rota"]'
+                        ).forEach(function (formulario) {
+                            const botao = formulario.querySelector('button');
+
+                            if (!botao) return;
+
+                            botao.disabled = false;
+                            botao.textContent = 'Enviar rota no WhatsApp';
+                        });
+                    });
+                </script>
+
+                <script>
+                (function () {
 					const textoPedido = document.getElementById('textoPedidoWord');
 					const resultado = document.getElementById('resultadoLeituraWord');
 					const formulario = document.getElementById('formAdicionarEntrega');
