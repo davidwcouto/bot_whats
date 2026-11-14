@@ -9760,6 +9760,150 @@ app.post(
                     'Confira os cadastros antes de enviar.'
                 );
             }
+			
+			// Verifica todas as rotas anteriores deste motoboy,
+            // incluindo as de dias anteriores.
+            const [rotasPendentes] = await db.execute(`
+                SELECT
+                    DATE_FORMAT(data_rota, '%Y-%m-%d') AS data_painel,
+                    DATE_FORMAT(data_rota, '%d/%m/%Y') AS data_formatada,
+                    horario_rota,
+
+                    COALESCE(SUM(
+                        CASE
+                            WHEN status_entrega = 'pendente'
+                                 AND forma_pagamento = 'pendente'
+                                THEN total
+
+                            WHEN status_entrega = 'entregue'
+                                 AND forma_pagamento = 'dinheiro'
+                                THEN GREATEST(
+                                    total
+                                        - COALESCE(
+                                            valor_recebido_dinheiro,
+                                            total
+                                        )
+                                        - COALESCE(
+                                            valor_recebido_pix,
+                                            0
+                                        ),
+                                    0
+                                )
+
+                            ELSE 0
+                        END
+                    ), 0) AS pendente
+
+                FROM entregas_motoboy
+                WHERE motoboy = ?
+                  AND data_rota >= '2026-11-13'
+                  AND (
+                      data_rota < ?
+                      OR (
+                          data_rota = ?
+                          AND CAST(horario_rota AS TIME) < CAST(? AS TIME)
+                      )
+                  )
+
+                GROUP BY data_rota, horario_rota
+                HAVING pendente > 0
+                ORDER BY data_rota, CAST(horario_rota AS TIME)
+            `, [
+                rota.motoboy,
+                rota.data_painel,
+                rota.data_painel,
+                rota.horario_rota
+            ]);
+
+            if (rotasPendentes.length > 0) {
+                const totalCentavos = rotasPendentes.reduce(
+                    (soma, pendencia) =>
+                        soma + Math.round(Number(pendencia.pendente) * 100),
+                    0
+                );
+
+                const listaPendencias = rotasPendentes.map(pendencia => {
+                    const linkConferencia =
+                        '/entregas/conferencia/rota' +
+                        '?data=' + encodeURIComponent(
+                            pendencia.data_painel
+                        ) +
+                        '&horario=' + encodeURIComponent(
+                            pendencia.horario_rota
+                        ) +
+                        '&motoboy=' + encodeURIComponent(rota.motoboy);
+
+                    return `
+                        <li style="margin-bottom: 16px;">
+                            <strong>
+                                ${escaparHtml(pendencia.data_formatada)}
+                                — ${escaparHtml(pendencia.horario_rota)}
+                            </strong>
+
+                            <br>
+
+                            Sem marcação:
+                            <strong style="color: #ff4d4f;">
+                                ${moedaEntregas(pendencia.pendente)}
+                            </strong>
+
+                            <br>
+
+                            <a href="${escaparHtml(linkConferencia)}">
+                                Conferir esta rota
+                            </a>
+                        </li>
+                    `;
+                }).join('');
+
+                const linkPainel =
+                    '/entregas/painel?data=' +
+                    encodeURIComponent(rota.data_painel);
+
+                return res.status(409).send(
+                    paginaEntregas('Envio de rota bloqueado', `
+                        <section>
+                            <h2 style="color: #ff4d4f;">
+                                Motoboy com marcações em aberto
+                            </h2>
+
+                            <p>
+                                <strong>
+                                    ${escaparHtml(rota.motoboy)}
+                                </strong>
+                                possui pendências em rotas anteriores.
+                            </p>
+
+                            <p>
+                                Total em <strong>Sem marcação</strong>:
+                                <strong style="color: #ff4d4f;">
+                                    ${moedaEntregas(totalCentavos / 100)}
+                                </strong>
+                            </p>
+
+                            <ul>
+                                ${listaPendencias}
+                            </ul>
+
+                            <p>
+                                Solicite ao motoboy que regularize
+                                todas as marcações acima antes de
+                                enviar a nova rota.
+                            </p>
+
+                            <p>
+                                <strong>
+                                    O link não foi enviado ao WhatsApp.
+                                </strong>
+                            </p>
+
+                            <a href="${escaparHtml(linkPainel)}">
+                                Voltar ao painel
+                            </a>
+                        </section>
+                    `)
+                );
+            }
 
             const nomeNormalizado = rota.motoboy
                 .normalize('NFD')
