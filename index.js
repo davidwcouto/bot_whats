@@ -9814,8 +9814,10 @@ app.post(
                 rota.data_painel,
                 rota.horario_rota
             ]);
+			const envioSobResponsabilidade =
+				req.body.assumir_responsabilidade === '1';
 
-            if (rotasPendentes.length > 0) {
+			if (rotasPendentes.length > 0 && !envioSobResponsabilidade) {
                 const totalCentavos = rotasPendentes.reduce(
                     (soma, pendencia) =>
                         soma + Math.round(Number(pendencia.pendente) * 100),
@@ -9896,6 +9898,50 @@ app.post(
                                     O link não foi enviado ao WhatsApp.
                                 </strong>
                             </p>
+							
+							<form
+								method="post"
+								action="/entregas/enviar-rota"
+								onsubmit="return confirm('ATENÇÃO: este motoboy possui marcações em aberto. Ao continuar, você assume a responsabilidade por liberar a nova rota e cobrar a regularização das pendências. Deseja enviar mesmo assim?');"
+								style="margin: 24px 0;"
+							>
+								${csrfEntregaCampo()}
+
+								<input
+									type="hidden"
+									name="codigo"
+									value="${escaparHtml(codigo)}"
+								>
+
+								<input
+									type="hidden"
+									name="assumir_responsabilidade"
+									value="1"
+								>
+
+								<p style="color: #ffb74d;">
+									<strong>Atenção:</strong>
+									ao enviar mesmo assim, você assume a responsabilidade
+									pela liberação da nova rota e pela cobrança das
+									marcações pendentes do motoboy.
+									As pendências continuarão registradas no painel.
+								</p>
+
+								<button
+									type="submit"
+									style="
+										background: #e69a00;
+										color: #111;
+										padding: 14px 20px;
+										border: none;
+										border-radius: 8px;
+										font-weight: bold;
+										cursor: pointer;
+									"
+								>
+									Enviar mesmo assim — assumo a responsabilidade
+								</button>
+							</form>
 
                             <a href="${escaparHtml(linkPainel)}">
                                 Voltar ao painel
