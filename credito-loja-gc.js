@@ -195,9 +195,9 @@ function createController(d) {
     }
     function render(res,op) {
         const p=op.plan;
-        if(op.status==='completed') return page(res,'Pagamento registrado',`<p>R$ ${br(p.amount)} em ${html(p.form)} registrado uma vez no bot e conferido no GestãoClick.</p><p>WhatsApp: ${html(op.whatsapp)}.</p><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a>`);
+        if(op.status==='completed') return page(res,'Pagamento registrado',`<p>R$ ${br(p.amount)} em ${html(p.form)} registrado na pagina Financeiro e também no GestãoClick.</p><p>WhatsApp: ${html(op.whatsapp)}.</p><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a>`);
         const started=op.status!=='preview';
-        return page(res,started?'Conferir operação em andamento':'Conferir pagamento',`<p>Cliente: <b>${html(p.local.name)}</b> · Loja: ${html(p.cfg.LOJA_ID)}</p><p>Pagamento: <b>R$ ${br(p.amount)} em ${html(p.form)}</b></p><p>Saldo na pagina Financeiro: R$ ${br(p.local.balance)}. Saldo em aberto no GestãoClick: R$ ${br(p.eligibleTotal)}.</p>${p.local.balance!==p.eligibleTotal?'<p class="warn">Os saldos dos dois sistemas são diferentes. Confira os pedidos abaixo antes de confirmar. Os registros antigos não serão ajustados automaticamente.</p>':''}<div class="scroll"><table><tr><th>Venda</th><th>Recebimento</th><th>Total</th><th>Baixar</th><th>Saldo Crédito Loja</th><th>Etapa</th></tr>${p.steps.map(s=>`<tr><td>${html(s.code)}</td><td>${html(s.id)}</td><td>${br(s.total)}</td><td>${br(s.paid)}</td><td>${br(s.remaining)}</td><td>${html(s.phase)}</td></tr>`).join('')}</table></div>${op.erro?`<p class="warn">${html(op.erro)}. Pode haver baixas já concluídas. Não registre outro pagamento para substituir esta operação.</p>`:''}<form method="post" action="/financeiro/credito-gc/${op.id}/confirmar">${d.csrfEntregaCampo()}<label><input type="checkbox" name="conferido" value="1" required> Conferi cliente, loja, pedidos e valor.</label><br><button>${started?'Verificar e continuar esta operação':'Confirmar pagamento nos dois sistemas'}</button></form><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a><p> ${started?'Uma solicitação com resultado incerto será consultada, sem repetir a baixa.': ''}</p>`);
+        return page(res,started?'Conferir operação em andamento':'Conferir pagamento',`<p>Cliente: <b>${html(p.local.name)}</b> · Loja: ${html(p.cfg.LOJA_ID)}</p><p>Pagamento: <b>R$ ${br(p.amount)} em ${html(p.form)}</b></p><p>Saldo na pagina Financeiro: R$ ${br(p.local.balance)}. Saldo em aberto no GestãoClick: R$ ${br(p.eligibleTotal)}.</p>${p.local.balance!==p.eligibleTotal?'<p class="warn">Os saldos dos dois sistemas são diferentes. Confira os pedidos abaixo antes de confirmar. Os registros antigos não serão ajustados automaticamente.</p>':''}<div class="scroll"><table><tr><th>Venda</th><th>Recebimento</th><th>Total</th><th>Baixar</th><th>Saldo Crédito Loja</th></tr>${p.steps.map(s=>`<tr><td>${html(s.code)}</td><td>${html(s.id)}</td><td>${br(s.total)}</td><td>${br(s.paid)}</td><td>${br(s.remaining)}</td></tr>`).join('')}</table></div>${op.erro?`<p class="warn">${html(op.erro)}. Pode haver baixas já concluídas. Não registre outro pagamento para substituir esta operação.</p>`:''}<form method="post" action="/financeiro/credito-gc/${op.id}/confirmar">${d.csrfEntregaCampo()}<label><input type="checkbox" name="conferido" value="1" required> Conferi cliente, loja, pedidos e valor.</label><br><button>${started?'Verificar e continuar esta operação':'Confirmar pagamento nos dois sistemas'}</button></form><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a><p> ${started?'Uma solicitação com resultado incerto será consultada, sem repetir a baixa.': ''}</p>`);
     }
     function makeBody(p,s,record) {
         const body=clone(record), m=body.MovimentacoesFinanceira;
@@ -311,9 +311,9 @@ function createController(d) {
         try {
             const l=await localInfo(op.plan.local.id);
             await d.enviarSaldoWhatsApp({telefone:l.telefone,cliente:l.nome,valorPagamento:br(op.plan.amount),formaPagamento:op.plan.form,saldo:br(op.plan.newBalance),observacao:op.plan.note});
-            await db.execute("UPDATE conta_gc_operacoes SET whatsapp='enviado' WHERE id=?",[op.id]);
+            await db.execute("UPDATE conta_gc_operacoes SET whatsapp='Enviado' WHERE id=?",[op.id]);
         } catch {
-            await db.execute("UPDATE conta_gc_operacoes SET whatsapp='falhou; conferir' WHERE id=?",[op.id]);
+            await db.execute("UPDATE conta_gc_operacoes SET whatsapp='Falhou; conferir' WHERE id=?",[op.id]);
         }
     }
 	
