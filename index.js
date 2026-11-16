@@ -5685,10 +5685,6 @@ app.get(
                     escaparHtml(dados.venda.codigo)
                 }</strong></p>
 
-                <p>Cliente: <strong>${
-                    escaparHtml(dados.venda.nome_cliente)
-                }</strong></p>
-
                 <p>Loja: <strong>${
                     escaparHtml(r.nome_loja)
                 }</strong></p>
