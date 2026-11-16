@@ -56,7 +56,9 @@ function createController(d) {
         const e = process.env;
         const names = ['GESTAOCLICK_LOJA_ID','GESTAOCLICK_FORMA_PIX_ID','GESTAOCLICK_FORMA_DINHEIRO_ID',
             'GESTAOCLICK_CONTA_BANCARIA_ID','GESTAOCLICK_SITUACAO_CREDITO_LOJA_ID',
-            'GESTAOCLICK_FORMA_CREDITO_LOJA_ID','GESTAOCLICK_SITUACAO_CONFIRMADO_ID'];
+            'GESTAOCLICK_FORMA_CREDITO_LOJA_ID',
+			'GESTAOCLICK_SITUACAO_CONFIRMADO_ID',
+			'GESTAOCLICK_SITUACAO_ABERTO_ID'];
         const cfg = {};
         for (const name of names) {
             assert(/^\d+$/.test(e[name] || ''), 'Configure '+name+'.');
@@ -112,8 +114,27 @@ function createController(d) {
             if (String(r.liquidado) !== '0' || String(r.forma_pagamento_id) !== cfg.FORMA_CREDITO_LOJA_ID) continue;
             const record = await read(r.id), m = record.MovimentacoesFinanceira;
             validateIdentity(m,cfg);
-            // Só a situação Crédito Loja é elegível: Em aberto não é automaticamente incluído.
-            if (String(m.situacao_id) !== cfg.SITUACAO_CREDITO_LOJA_ID) continue;
+			// Aceita Crédito Loja também quando a situação ainda está Em aberto.
+			const situacoesPermitidas = [
+				cfg.SITUACAO_CREDITO_LOJA_ID,
+				cfg.SITUACAO_ABERTO_ID
+			];
+
+			if (
+				!situacoesPermitidas.includes(
+					String(m.situacao_id)
+				)
+			) {
+				continue;
+			}
+
+			// Confere novamente os dados atuais da tela de edição.
+			if (
+				String(m.forma_pagamento_id) !==
+				cfg.FORMA_CREDITO_LOJA_ID
+			) {
+				continue;
+			}
             assert(String(m.baixado) === '0', 'A listagem mudou durante a consulta. Atualize.');
             const code = saleNumber(m.nome);
             assert(code && /^\d+$/.test(String(m.pedido_id)), 'Recebimento sem vínculo de venda reconhecido.');
@@ -149,7 +170,7 @@ function createController(d) {
         const p=op.plan;
         if(op.status==='completed') return page(res,'Pagamento registrado',`<p>R$ ${br(p.amount)} em ${html(p.form)} registrado uma vez no bot e conferido no GestãoClick.</p><p>WhatsApp: ${html(op.whatsapp)}.</p><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a>`);
         const started=op.status!=='preview';
-        return page(res,started?'Conferir operação em andamento':'Conferir pagamento',`<p>Cliente local: <b>${html(p.local.name)}</b> · Cliente GestãoClick: <b>${html(p.cfg.client)}</b> · Loja: ${html(p.cfg.LOJA_ID)}</p><p>Pagamento: <b>R$ ${br(p.amount)} em ${html(p.form)}</b></p><p>Saldo local na prévia: R$ ${br(p.local.balance)}. Crédito Loja elegível no GestãoClick: R$ ${br(p.eligibleTotal)}.</p>${p.local.balance!==p.eligibleTotal?'<p class="warn">Os saldos dos dois sistemas são diferentes. Confira os pedidos abaixo antes de confirmar. Os registros antigos não serão ajustados automaticamente.</p>':''}<p>Período consultado: ${html(p.cfg.from)} até ${html(p.cfg.to)}. Apenas lançamentos com situação e forma Crédito Loja. Ordem: vencimento mais antigo.</p><div class="scroll"><table><tr><th>Venda</th><th>Recebimento</th><th>Total</th><th>Baixar</th><th>Saldo Crédito Loja</th><th>Etapa</th></tr>${p.steps.map(s=>`<tr><td>${html(s.code)}</td><td>${html(s.id)}</td><td>${br(s.total)}</td><td>${br(s.paid)}</td><td>${br(s.remaining)}</td><td>${html(s.phase)}</td></tr>`).join('')}</table></div>${op.erro?`<p class="warn">${html(op.erro)}. Pode haver baixas já concluídas. Não registre outro pagamento para substituir esta operação.</p>`:''}<form method="post" action="/financeiro/credito-gc/${op.id}/confirmar">${d.csrfEntregaCampo()}<label><input type="checkbox" name="conferido" value="1" required> Conferi cliente, loja, pedidos e valor.</label><br><button>${started?'Verificar e continuar esta operação':'Confirmar pagamento nos dois sistemas'}</button></form><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a><p>Operação: ${html(op.id)}. ${started?'Uma solicitação com resultado incerto será consultada, sem repetir a baixa.':'Esta prévia não altera os recebimentos.'}</p>`);
+        return page(res,started?'Conferir operação em andamento':'Conferir pagamento',`<p>Cliente local: <b>${html(p.local.name)}</b> · Cliente GestãoClick: <b>${html(p.cfg.client)}</b> · Loja: ${html(p.cfg.LOJA_ID)}</p><p>Pagamento: <b>R$ ${br(p.amount)} em ${html(p.form)}</b></p><p>Saldo local na prévia: R$ ${br(p.local.balance)}. Crédito Loja elegível no GestãoClick: R$ ${br(p.eligibleTotal)}.</p>${p.local.balance!==p.eligibleTotal?'<p class="warn">Os saldos dos dois sistemas são diferentes. Confira os pedidos abaixo antes de confirmar. Os registros antigos não serão ajustados automaticamente.</p>':''}<p>Período consultado: ${html(p.cfg.from)} até ${html(p.cfg.to)}. Apenas recebimentos sem baixa, com forma Crédito Loja e situação Crédito Loja ou Em aberto. Ordem: vencimento mais antigo.</p><div class="scroll"><table><tr><th>Venda</th><th>Recebimento</th><th>Total</th><th>Baixar</th><th>Saldo Crédito Loja</th><th>Etapa</th></tr>${p.steps.map(s=>`<tr><td>${html(s.code)}</td><td>${html(s.id)}</td><td>${br(s.total)}</td><td>${br(s.paid)}</td><td>${br(s.remaining)}</td><td>${html(s.phase)}</td></tr>`).join('')}</table></div>${op.erro?`<p class="warn">${html(op.erro)}. Pode haver baixas já concluídas. Não registre outro pagamento para substituir esta operação.</p>`:''}<form method="post" action="/financeiro/credito-gc/${op.id}/confirmar">${d.csrfEntregaCampo()}<label><input type="checkbox" name="conferido" value="1" required> Conferi cliente, loja, pedidos e valor.</label><br><button>${started?'Verificar e continuar esta operação':'Confirmar pagamento nos dois sistemas'}</button></form><a href="/financeiro/extrato/${Number(p.local.id)}">Voltar ao extrato</a><p>Operação: ${html(op.id)}. ${started?'Uma solicitação com resultado incerto será consultada, sem repetir a baixa.':'Esta prévia não altera os recebimentos.'}</p>`);
     }
     function makeBody(p,s,record) {
         const body=clone(record), m=body.MovimentacoesFinanceira;
