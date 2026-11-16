@@ -49,10 +49,28 @@ function createController(d) {
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB`);
+			
+			await db.execute(`
+				CREATE TABLE IF NOT EXISTS conta_gc_clientes (
+					loja_id VARCHAR(40) NOT NULL,
+					cliente_local BIGINT NOT NULL,
+					cliente_gc VARCHAR(40) NOT NULL,
+					nome_gc VARCHAR(255) NOT NULL,
+					venda_referencia VARCHAR(40) NOT NULL,
+					criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+					PRIMARY KEY (loja_id, cliente_local),
+
+					UNIQUE KEY cliente_gc_unico (
+						loja_id,
+						cliente_gc
+					)
+				) ENGINE=InnoDB
+			`);
         })().catch(e => {ready = null; throw e;});
-        return ready;
+        return ready;	
     }
-    function config(local) {
+    async function config(local) {
         const e = process.env;
         const names = ['GESTAOCLICK_LOJA_ID','GESTAOCLICK_FORMA_PIX_ID','GESTAOCLICK_FORMA_DINHEIRO_ID',
             'GESTAOCLICK_CONTA_BANCARIA_ID','GESTAOCLICK_SITUACAO_CREDITO_LOJA_ID',
@@ -65,12 +83,21 @@ function createController(d) {
             cfg[name.replace('GESTAOCLICK_','')] = e[name];
         }
         assert(cfg.SITUACAO_CREDITO_LOJA_ID !== cfg.SITUACAO_CONFIRMADO_ID, 'As situações de crédito e confirmado devem ser diferentes.');
-        let map;
-        try { map = JSON.parse(e.GESTAOCLICK_CLIENTES_CONTA_MAPA || '{}'); } catch { throw new Error('GESTAOCLICK_CLIENTES_CONTA_MAPA inválido.'); }
-        cfg.client = String(map[cfg.LOJA_ID]?.[String(local)] || '');
-        assert(/^\d+$/.test(cfg.client), 'Este cliente ainda não tem vínculo configurado com o GestãoClick. Não foi registrado pagamento.');
-        const values = Object.values(map[cfg.LOJA_ID] || {}).map(String);
-        assert(new Set(values).size === values.length, 'Um cliente do GestãoClick está vinculado a dois clientes locais. Corrija o mapa.');
+        await schema();
+
+		const [vinculos] = await db.execute(`
+			SELECT cliente_gc
+			FROM conta_gc_clientes
+			WHERE loja_id = ?
+			  AND cliente_local = ?
+		`, [cfg.LOJA_ID, local]);
+
+		cfg.client = String(vinculos[0]?.cliente_gc || '');
+
+		assert(
+			/^\d+$/.test(cfg.client),
+			'Cliente sem vínculo. Volte ao extrato e clique em Registrar pagamento para vinculá-lo.'
+		);
         cfg.from = e.GESTAOCLICK_CREDITO_DATA_INICIO;
         assert(/^\d{4}-\d{2}-\d{2}$/.test(cfg.from || ''), 'Configure GESTAOCLICK_CREDITO_DATA_INICIO (AAAA-MM-DD).');
         cfg.to = `${Number(d.todayISO().slice(0,4)) + 1}-12-31`;
@@ -107,7 +134,7 @@ function createController(d) {
     }
     const publicSnapshot = r => [String(r.id),String(r.valor),String(r.valor_total),String(r.liquidado),String(r.forma_pagamento_id),String(r.conta_bancaria_id),String(r.data_vencimento)];
     async function plan(local, amount, form, note) {
-        const cfg = config(local.id);
+        const cfg = await config(local.id);
         assert(amount > 0 && amount <= local.balance, 'Valor maior que o saldo local ou inválido.');
         const all = await list(cfg), eligible = [];
         for (const r of all) {
@@ -222,8 +249,12 @@ function createController(d) {
     }
     async function execute(op,conn) {
         const p=op.plan;
-        assert(signature(config(p.local.id))===signature(p.cfg), 'Configuração mudou desde a prévia. Confira esta operação antes de continuar.');
-        if(op.status==='preview') {
+		const configuracaoAtual = await config(p.local.id);
+
+		assert(
+			signature(configuracaoAtual) === signature(p.cfg),
+			'Configuração mudou desde a prévia. Confira esta operação antes de continuar.'
+		);        if(op.status==='preview') {
             const current=await localInfo(p.local.id,conn);
             assert(current.balance===p.local.balance, 'Saldo local mudou. Faça uma nova prévia.');
             // Reserva persistente: mesmo após reiniciar o bot só esta operação pode continuar.
@@ -285,9 +316,403 @@ function createController(d) {
             await db.execute("UPDATE conta_gc_operacoes SET whatsapp='falhou; conferir' WHERE id=?",[op.id]);
         }
     }
+	
+	function lojaDoVinculo() {
+    const loja = String(
+        process.env.GESTAOCLICK_LOJA_ID || ''
+    ).trim();
+
+    assert(
+        /^\d+$/.test(loja),
+        'Configure GESTAOCLICK_LOJA_ID.'
+    );
+
+    return loja;
+}
+
+async function consultarVendaParaVinculo(codigo, loja) {
+    assert(
+        /^\d+$/.test(codigo),
+        'Informe somente o número da venda.'
+    );
+
+    const vendas = (
+        await gcListar('/vendas', {
+            codigo,
+            loja_id: loja,
+            tipo: 'vendas_balcao'
+        })
+    ).filter(venda =>
+        String(venda.codigo) === codigo
+    );
+
+    assert(
+        vendas.length === 1,
+        'Venda não encontrada ou resultado ambíguo.'
+    );
+
+    const venda = vendas[0];
+
+    assert(
+        /^\d+$/.test(String(venda.id || '')) &&
+        /^\d+$/.test(String(venda.cliente_id || '')) &&
+        String(venda.nome_cliente || '').trim(),
+        'A venda não retornou um cliente válido.'
+    );
+
+    if (venda.loja_id) {
+        assert(
+            String(venda.loja_id) === loja,
+            'Essa venda pertence a outra loja.'
+        );
+    } else {
+        // Algumas consultas de venda não retornam loja_id.
+        // Nesse caso, confirmamos a loja pelo recebimento.
+        const dataVenda = String(venda.data || '').slice(0, 10);
+
+        assert(
+            /^\d{4}-\d{2}-\d{2}$/.test(dataVenda),
+            'Não foi possível identificar a data da venda.'
+        );
+
+        const ano = Number(dataVenda.slice(0, 4));
+        const anoAtual = Number(d.todayISO().slice(0, 4));
+
+        const recebimentos = await gcListar('/recebimentos', {
+            loja_id: loja,
+            cliente_id: String(venda.cliente_id),
+            data_inicio: `${Math.min(ano, anoAtual)}-01-01`,
+            data_fim: `${Math.max(ano, anoAtual) + 1}-12-31`
+        });
+
+        const candidatos = recebimentos.filter(r =>
+            String(r.loja_id) === loja &&
+            String(r.cliente_id) === String(venda.cliente_id) &&
+            saleNumber(r.descricao) === codigo
+        );
+
+        let lojaConfirmada = false;
+
+        for (const recebimento of candidatos) {
+            const registro = await read(String(recebimento.id));
+            const m = registro.MovimentacoesFinanceira;
+
+            if (
+                String(m.loja_id) === loja &&
+                String(m.cliente_id) === String(venda.cliente_id) &&
+                String(m.pedido_id) === String(venda.id) &&
+                String(m.tipo) === 'C'
+            ) {
+                lojaConfirmada = true;
+                break;
+            }
+        }
+
+        assert(
+            lojaConfirmada,
+            'Não foi possível confirmar a loja dessa venda. Tente outra venda do mesmo cliente.'
+        );
+    }
+
+    return venda;
+}
+
+async function exigirVinculo(req, res, next) {
+    try {
+        await schema();
+
+        const clienteId = String(req.params.id || '');
+
+        assert(
+            /^\d+$/.test(clienteId),
+            'Cliente inválido.'
+        );
+
+        await localInfo(clienteId);
+
+        const loja = lojaDoVinculo();
+
+        const [vinculos] = await db.execute(`
+            SELECT cliente_gc
+            FROM conta_gc_clientes
+            WHERE loja_id = ?
+              AND cliente_local = ?
+        `, [loja, clienteId]);
+
+        if (vinculos.length) {
+            return next();
+        }
+
+        return res.redirect(
+            303,
+            '/financeiro/vinculo-gc/' + clienteId
+        );
+    } catch (erro) {
+        return failure(res, erro);
+    }
+}
+
+async function vincularCliente(req, res) {
+    try {
+        await schema();
+
+        const clienteId = String(req.params.id || '');
+
+        assert(
+            /^\d+$/.test(clienteId),
+            'Cliente inválido.'
+        );
+
+        const cliente = await localInfo(clienteId);
+        const loja = lojaDoVinculo();
+
+        const [existentes] = await db.execute(`
+            SELECT cliente_gc
+            FROM conta_gc_clientes
+            WHERE loja_id = ?
+              AND cliente_local = ?
+        `, [loja, clienteId]);
+
+        if (existentes.length) {
+            return res.redirect(
+                303,
+                '/financeiro/pagamento/' + clienteId
+            );
+        }
+
+        const acao = req.method === 'POST'
+            ? String(req.body.acao || '')
+            : '';
+
+        const codigo = String(
+            req.body?.pedido || ''
+        ).trim();
+
+        let venda = null;
+
+        if (acao) {
+            assert(
+                ['consultar', 'salvar'].includes(acao),
+                'Ação inválida.'
+            );
+
+            // Consulta novamente ao salvar: não confia no ID
+            // de cliente enviado pelo navegador.
+            venda = await consultarVendaParaVinculo(
+                codigo,
+                loja
+            );
+        }
+
+        if (acao === 'salvar') {
+            assert(
+                req.body.conferido === '1',
+                'Confirme que os dois cadastros são da mesma pessoa ou empresa.'
+            );
+
+            assert(
+                String(req.body.cliente_gc) ===
+                    String(venda.cliente_id) &&
+                String(req.body.venda_id) ===
+                    String(venda.id),
+                'Os dados da venda mudaram. Consulte novamente.'
+            );
+
+            const [operacoes] = await db.execute(`
+                SELECT id
+                FROM conta_gc_operacoes
+                WHERE cliente_local = ?
+                  AND ativo_cliente IS NOT NULL
+                LIMIT 1
+            `, [clienteId]);
+
+            assert(
+                operacoes.length === 0,
+                'Existe uma operação de pagamento pendente para este cliente. Confira-a antes de criar o vínculo.'
+            );
+
+            try {
+                await db.execute(`
+                    INSERT INTO conta_gc_clientes (
+                        loja_id,
+                        cliente_local,
+                        cliente_gc,
+                        nome_gc,
+                        venda_referencia
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                `, [
+                    loja,
+                    clienteId,
+                    String(venda.cliente_id),
+                    String(venda.nome_cliente),
+                    codigo
+                ]);
+            } catch (erro) {
+                if (erro.code !== 'ER_DUP_ENTRY') {
+                    throw erro;
+                }
+
+                // Trata também dois cliques simultâneos.
+                const [atual] = await db.execute(`
+                    SELECT cliente_gc
+                    FROM conta_gc_clientes
+                    WHERE loja_id = ?
+                      AND cliente_local = ?
+                `, [loja, clienteId]);
+
+                assert(
+                    atual.length === 1 &&
+                    String(atual[0].cliente_gc) ===
+                        String(venda.cliente_id),
+                    'Este cadastro já possui outro vínculo ou o cliente do GestãoClick já está vinculado a outro cadastro local.'
+                );
+            }
+
+            return res.redirect(
+                303,
+                '/financeiro/pagamento/' + clienteId
+            );
+        }
+
+        return page(
+            res,
+            'Vincular cliente ao GestãoClick',
+            `
+                <p>
+                    Cliente no bot:
+                    <strong>${html(cliente.nome)}</strong>
+                </p>
+
+                <p>
+                    Telefone:
+                    ${html(cliente.telefone)}
+                </p>
+
+                <p>
+                    Informe uma venda desse cliente
+                    na loja ${html(loja)}.
+                </p>
+
+                <form
+                    method="post"
+                    action="/financeiro/vinculo-gc/${clienteId}"
+                >
+                    ${d.csrfEntregaCampo()}
+
+                    <input
+                        type="hidden"
+                        name="acao"
+                        value="consultar"
+                    >
+
+                    <label>Número da venda</label>
+
+                    <input
+                        type="text"
+                        name="pedido"
+                        inputmode="numeric"
+                        pattern="[0-9]+"
+                        value="${html(codigo)}"
+                        required
+                    >
+
+                    <button type="submit">
+                        Consultar venda
+                    </button>
+                </form>
+
+                ${venda ? `
+                    <hr>
+
+                    <h2>Confira o cliente encontrado</h2>
+
+                    <p>
+                        Venda:
+                        <strong>${html(venda.codigo)}</strong>
+                    </p>
+
+                    <p>
+                        Cliente no GestãoClick:
+                        <strong>
+                            ${html(venda.nome_cliente)}
+                        </strong>
+                    </p>
+
+                    <p>
+                        Loja:
+                        ${html(venda.nome_loja || loja)}
+                    </p>
+
+                    <form
+                        method="post"
+                        action="/financeiro/vinculo-gc/${clienteId}"
+                    >
+                        ${d.csrfEntregaCampo()}
+
+                        <input
+                            type="hidden"
+                            name="acao"
+                            value="salvar"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="pedido"
+                            value="${html(codigo)}"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="cliente_gc"
+                            value="${html(venda.cliente_id)}"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="venda_id"
+                            value="${html(venda.id)}"
+                        >
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                name="conferido"
+                                value="1"
+                                required
+                            >
+                            Conferi: os dois cadastros são
+                            da mesma pessoa ou empresa.
+                        </label>
+
+                        <br>
+
+                        <button type="submit">
+                            Confirmar vínculo
+                        </button>
+                    </form>
+                ` : ''}
+
+                <p>
+                    Esta etapa apenas vincula os cadastros.
+                    Nenhum pagamento será registrado.
+                </p>
+
+                <a href="/financeiro/extrato/${clienteId}">
+                    Voltar ao extrato
+                </a>
+            `
+        );
+    } catch (erro) {
+        return failure(res, erro);
+    }
+}
     const failure=(res,e)=>page(res,'Pagamento não concluído',`<p>${html(e.message)}</p><a href="/financeiro">Voltar ao financeiro</a>`,409);
     return {
-        async preview(req,res,next) {
+		exigirVinculo,
+		vincularCliente,
+
+		async preview(req,res,next) {
             try {
                 await schema();
                 const id=String(req.body.cliente_id || '');

@@ -3419,6 +3419,21 @@ function obterCreditoLojaGC() {
     return obterCreditoLojaGC.instancia;
 }
 
+app.get(
+    '/financeiro/vinculo-gc/:id',
+    autenticarEntregas,
+    (req, res) =>
+        obterCreditoLojaGC().vincularCliente(req, res)
+);
+
+app.post(
+    '/financeiro/vinculo-gc/:id',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    (req, res) =>
+        obterCreditoLojaGC().vincularCliente(req, res)
+);
+
 // Exibe a prévia e o andamento do pagamento.
 app.get(
     '/financeiro/credito-gc/:id',
@@ -3436,7 +3451,14 @@ app.post(
         obterCreditoLojaGC().confirm(req, res)
 );
 
-app.get('/financeiro/pagamento/:id', autenticarEntregas, async (req, res) => {
+app.get(
+    '/financeiro/pagamento/:id',
+    autenticarEntregas,
+
+    (req, res, next) =>
+        obterCreditoLojaGC().exigirVinculo(req, res, next),
+
+    async (req, res) => {
         try {
             const id = Number(req.params.id);
 			if (!Number.isInteger(id) || id <= 0) {
