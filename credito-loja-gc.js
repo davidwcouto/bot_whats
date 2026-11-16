@@ -175,10 +175,13 @@ function createController(d) {
 					cfg.SITUACAO_ABERTO_ID
 				].includes(situacaoAtual);
 
-			// Dinheiro/Pix: aceita somente Em aberto.
+			// Dinheiro/Pix: aceita Em aberto ou Crédito Loja.
 			const dinheiroPixAberto =
 				formaAtual === cfg.FORMA_DINHEIRO_PIX_ID &&
-				situacaoAtual === cfg.SITUACAO_ABERTO_ID;
+				[
+					cfg.SITUACAO_ABERTO_ID,
+					cfg.SITUACAO_CREDITO_LOJA_ID
+				].includes(situacaoAtual);
 
 			if (!creditoLoja && !dinheiroPixAberto) {
 				continue;
