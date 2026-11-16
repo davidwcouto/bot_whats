@@ -3395,7 +3395,48 @@ app.post('/financeiro/clientes/:id/status', async (req, res) => {
     }
 );
 
-app.get('/financeiro/pagamento/:id', async (req, res) => {
+// Integração da conta a prazo com o GestãoClick.
+function obterCreditoLojaGC() {
+    if (!obterCreditoLojaGC.instancia) {
+        obterCreditoLojaGC.instancia =
+            require('./credito-loja-gc').createController({
+                db,
+                gcApiTela,
+                gcListar,
+                gcValorTelaCentavos,
+                gcValorTela,
+                csrfEntregaCampo,
+                enviarSaldoWhatsApp,
+
+                todayISO: () =>
+                    require('luxon').DateTime
+                        .now()
+                        .setZone('America/Sao_Paulo')
+                        .toISODate()
+            });
+    }
+
+    return obterCreditoLojaGC.instancia;
+}
+
+// Exibe a prévia e o andamento do pagamento.
+app.get(
+    '/financeiro/credito-gc/:id',
+    autenticarEntregas,
+    (req, res) =>
+        obterCreditoLojaGC().view(req, res)
+);
+
+// Confirma ou verifica uma operação já iniciada.
+app.post(
+    '/financeiro/credito-gc/:id/confirmar',
+    autenticarEntregas,
+    validarFormularioEntrega,
+    (req, res) =>
+        obterCreditoLojaGC().confirm(req, res)
+);
+
+app.get('/financeiro/pagamento/:id', autenticarEntregas, async (req, res) => {
         try {
             const id = Number(req.params.id);
 			if (!Number.isInteger(id) || id <= 0) {
@@ -3529,10 +3570,11 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
             R$ ${formatarValorConta(saldo)}
         </div>
 
-        <form
-            method="POST"
-            action="/financeiro/pagamentos"
-        >
+<form
+    method="POST"
+    action="/financeiro/pagamentos"
+>
+    ${csrfEntregaCampo()}
             <input
                 type="hidden"
                 name="cliente_id"
@@ -3619,7 +3661,15 @@ app.get('/financeiro/pagamento/:id', async (req, res) => {
     }
 );
 
-app.post('/financeiro/pagamentos', async (req, res) => {
+app.post(
+    '/financeiro/pagamentos',
+    autenticarEntregas,
+    validarFormularioEntrega,
+
+    (req, res, next) =>
+        obterCreditoLojaGC().preview(req, res, next),
+
+    async (req, res) => {
     let conexao;
 
     try {
