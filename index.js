@@ -5165,6 +5165,170 @@ app.get(
     }
 );
 
+app.get(
+    '/entregas/teste-distribuicao-credito',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const config = gcConfiguracao();
+
+            if (
+                config.GESTAOCLICK_LOJA_ID !== '552685' ||
+                config.GESTAOCLICK_FORMA_PIX_ID !== '6775494'
+            ) {
+                throw new Error(
+                    'Este teste foi preparado para Sapucaia e sua forma PIX.'
+                );
+            }
+
+            const recebimentos = await gcListar('/recebimentos', {
+                loja_id: '552685',
+                cliente_id: '60216403',
+                data_inicio: '2026-11-01',
+                data_fim: '2026-11-30'
+            });
+
+            // Ordem definida para este teste.
+            const pedidos = [
+                { numero: '11914', valorCentavos: 1000 },
+                { numero: '11915', valorCentavos: 500 },
+                { numero: '11916', valorCentavos: 2000 }
+            ];
+
+            let restante = 2000;
+            const distribuicao = [];
+
+            for (const pedido of pedidos) {
+                const encontrados = recebimentos.filter(r => {
+                    const referencia = String(r.descricao || '')
+                        .trim()
+                        .match(/^Venda de n[º°o]\s*(\d+)$/i);
+
+                    return (
+                        referencia?.[1] === pedido.numero &&
+                        String(r.loja_id) === '552685' &&
+                        String(r.cliente_id) === '60216403'
+                    );
+                });
+
+                if (encontrados.length !== 1) {
+                    throw new Error(
+                        'Pedido ' + pedido.numero +
+                        ': esperado um único recebimento; encontrados ' +
+                        encontrados.length + '.'
+                    );
+                }
+
+                const r = encontrados[0];
+                const resposta = await gcApiTela('GET', String(r.id));
+
+                let registro = resposta.data?.['request.data'];
+
+                if (typeof registro === 'string') {
+                    registro = JSON.parse(registro);
+                }
+
+                const m = registro?.MovimentacoesFinanceira;
+                const parcelas =
+                    registro?.MovimentacoesFinanceirasParcela;
+
+                if (
+                    !m ||
+                    String(m.id) !== String(r.id) ||
+                    String(m.loja_id) !== '552685' ||
+                    String(m.cliente_id) !== '60216403' ||
+                    String(m.pedido_id) !== String(r.pedido_id || m.pedido_id) ||
+                    String(m.baixado) !== '0' ||
+                    String(m.situacao_id) !== '993920' ||
+                    String(m.forma_pagamento_id) !== '6358997'
+                ) {
+                    throw new Error(
+                        'Pedido ' + pedido.numero +
+                        ': recebimento não corresponde ao Crédito Loja em aberto esperado.'
+                    );
+                }
+
+                const referenciaTela = String(m.nome || '')
+                    .trim()
+                    .match(/^Venda de n[º°o]\s*(\d+)$/i);
+
+                if (referenciaTela?.[1] !== pedido.numero) {
+                    throw new Error(
+                        'Referência diferente na tela do pedido ' +
+                        pedido.numero + '.'
+                    );
+                }
+
+                if (
+                    parcelas != null &&
+                    (
+                        !Array.isArray(parcelas) ||
+                        parcelas.filter(Boolean).length > 0
+                    )
+                ) {
+                    throw new Error(
+                        'Pedido ' + pedido.numero +
+                        ': já possui parcelas. Confira antes do teste.'
+                    );
+                }
+
+                const totalCentavos =
+                    gcValorTelaCentavos(m.valor_total);
+
+                if (totalCentavos !== pedido.valorCentavos) {
+                    throw new Error(
+                        'Pedido ' + pedido.numero +
+                        ': valor diferente do esperado para este teste.'
+                    );
+                }
+
+                const pagar = Math.min(restante, totalCentavos);
+                restante -= pagar;
+
+                distribuicao.push({
+                    pedido: pedido.numero,
+                    recebimento_id: String(m.id),
+                    total: (totalCentavos / 100).toFixed(2),
+                    confirmar_pix: (pagar / 100).toFixed(2),
+                    manter_credito_loja:
+                        ((totalCentavos - pagar) / 100).toFixed(2),
+                    situacao_confirmado_id: '933476',
+                    forma_pix_id: config.GESTAOCLICK_FORMA_PIX_ID,
+                    situacao_saldo_id: '993920',
+                    forma_saldo_id: '6358997'
+                });
+            }
+
+            if (restante !== 0) {
+                throw new Error(
+                    'Não foi possível distribuir os R$ 20,00 integralmente.'
+                );
+            }
+
+            return res.json({
+                aviso: 'Simulação somente. Nenhuma baixa foi enviada.',
+                cliente_id: '60216403',
+                loja_id: '552685',
+                pagamento_pix: '20.00',
+                saldo_final_credito_loja: '15.00',
+                distribuicao
+            });
+        } catch (erro) {
+            console.error(
+                'Erro no teste de distribuição:',
+                erro.message
+            );
+
+            return res.status(400).json({
+                aviso: 'Nenhuma baixa foi enviada.',
+                erro: erro.message
+            });
+        }
+    }
+);
+
 async function gcApiTela(metodo, recebimentoId, corpo) {
     if (!/^\d+$/.test(String(recebimentoId))) {
         throw new Error('ID de recebimento inválido.');
