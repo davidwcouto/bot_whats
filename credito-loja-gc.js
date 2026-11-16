@@ -76,7 +76,8 @@ function createController(d) {
             'GESTAOCLICK_CONTA_BANCARIA_ID','GESTAOCLICK_SITUACAO_CREDITO_LOJA_ID',
             'GESTAOCLICK_FORMA_CREDITO_LOJA_ID',
 			'GESTAOCLICK_SITUACAO_CONFIRMADO_ID',
-			'GESTAOCLICK_SITUACAO_ABERTO_ID'];
+			'GESTAOCLICK_SITUACAO_ABERTO_ID',
+			'GESTAOCLICK_FORMA_DINHEIRO_PIX_ID'];
         const cfg = {};
         for (const name of names) {
             assert(/^\d+$/.test(e[name] || ''), 'Configure '+name+'.');
@@ -138,32 +139,56 @@ function createController(d) {
         assert(amount > 0 && amount <= local.balance, 'Valor maior que o saldo local ou inválido.');
         const all = await list(cfg), eligible = [];
         for (const r of all) {
-            if (String(r.liquidado) !== '0' || String(r.forma_pagamento_id) !== cfg.FORMA_CREDITO_LOJA_ID) continue;
-            const record = await read(r.id), m = record.MovimentacoesFinanceira;
-            validateIdentity(m,cfg);
-			// Aceita Crédito Loja também quando a situação ainda está Em aberto.
-			const situacoesPermitidas = [
-				cfg.SITUACAO_CREDITO_LOJA_ID,
-				cfg.SITUACAO_ABERTO_ID
+			// Considera somente recebimentos ainda não baixados.
+			if (String(r.liquidado) !== '0') {
+				continue;
+			}
+
+			// Formas que podem participar do abatimento.
+			const formasPermitidas = [
+				cfg.FORMA_CREDITO_LOJA_ID,
+				cfg.FORMA_DINHEIRO_PIX_ID
 			];
 
 			if (
-				!situacoesPermitidas.includes(
-					String(m.situacao_id)
+				!formasPermitidas.includes(
+					String(r.forma_pagamento_id)
 				)
 			) {
 				continue;
 			}
 
-			// Confere novamente os dados atuais da tela de edição.
-			if (
-				String(m.forma_pagamento_id) !==
-				cfg.FORMA_CREDITO_LOJA_ID
-			) {
+			// Confere os dados atuais na edição do recebimento.
+			const record = await read(r.id);
+			const m = record.MovimentacoesFinanceira;
+
+			validateIdentity(m, cfg);
+
+			const formaAtual = String(m.forma_pagamento_id);
+			const situacaoAtual = String(m.situacao_id);
+
+			// Crédito Loja: aceita Crédito Loja ou Em aberto.
+			const creditoLoja =
+				formaAtual === cfg.FORMA_CREDITO_LOJA_ID &&
+				[
+					cfg.SITUACAO_CREDITO_LOJA_ID,
+					cfg.SITUACAO_ABERTO_ID
+				].includes(situacaoAtual);
+
+			// Dinheiro/Pix: aceita somente Em aberto.
+			const dinheiroPixAberto =
+				formaAtual === cfg.FORMA_DINHEIRO_PIX_ID &&
+				situacaoAtual === cfg.SITUACAO_ABERTO_ID;
+
+			if (!creditoLoja && !dinheiroPixAberto) {
 				continue;
 			}
-            assert(String(m.baixado) === '0', 'A listagem mudou durante a consulta. Atualize.');
-            const code = saleNumber(m.nome);
+
+			assert(
+				String(m.baixado) === '0',
+				'A listagem mudou durante a consulta. Atualize.'
+			);
+			const code = saleNumber(m.nome);
             assert(code && /^\d+$/.test(String(m.pedido_id)), 'Recebimento sem vínculo de venda reconhecido.');
             const parts = record.MovimentacoesFinanceirasParcela;
             assert(parts == null || (Array.isArray(parts) && !parts.filter(Boolean).length), 'Há parcelamento dentro da edição do recebimento. Confira manualmente.');
