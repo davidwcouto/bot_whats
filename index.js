@@ -5110,7 +5110,7 @@ app.get(
         res.set('Cache-Control', 'no-store');
 
         try {
-            const resposta = await gcApiTela('GET', '622837238');
+const resposta = await gcApiTela('GET', '622841556');
 
             let registro = resposta.data?.['request.data'];
 
@@ -5120,7 +5120,7 @@ app.get(
 
             const recebimento = registro?.MovimentacoesFinanceira;
 
-            if (!recebimento || String(recebimento.id) !== '622837238') {
+if (!recebimento || String(recebimento.id) !== '622841556') {
                 return res.status(502).json({
                     erro: 'O GestãoClick não retornou o recebimento esperado.'
                 });
