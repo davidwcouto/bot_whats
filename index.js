@@ -5103,6 +5103,68 @@ function gcValorTela(centavos) {
     );
 }
 
+app.get(
+    '/entregas/teste-credito-loja',
+    autenticarEntregas,
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+
+        try {
+            const resposta = await gcApiTela('GET', '622837238');
+
+            let registro = resposta.data?.['request.data'];
+
+            if (typeof registro === 'string') {
+                registro = JSON.parse(registro);
+            }
+
+            const recebimento = registro?.MovimentacoesFinanceira;
+
+            if (!recebimento || String(recebimento.id) !== '622837238') {
+                return res.status(502).json({
+                    erro: 'O GestãoClick não retornou o recebimento esperado.'
+                });
+            }
+
+            return res.json({
+                aviso: 'Consulta somente. Nenhum dado foi alterado.',
+                recebimento: {
+                    id: recebimento.id,
+                    descricao: recebimento.nome,
+                    loja_id: recebimento.loja_id,
+                    cliente_id: recebimento.cliente_id,
+                    nome_cliente: recebimento.nome_cliente,
+                    valor: recebimento.valor,
+                    valor_total: recebimento.valor_total,
+                    baixado: recebimento.baixado,
+                    situacao_id: recebimento.situacao_id,
+                    forma_pagamento_id: recebimento.forma_pagamento_id,
+                    nome_forma_pagamento:
+                        recebimento.nome_forma_pagamento,
+                    conta_bancaria_id: recebimento.conta_bancaria_id,
+                    categoria_id: recebimento.categoria_id,
+                    data_vencimento: recebimento.data_vencimento,
+                    data_emissao: recebimento.data_emissao,
+                    pedido_id: recebimento.pedido_id,
+                    pedido_parcela_id: recebimento.pedido_parcela_id
+                },
+                situacoes_disponiveis: resposta.data?.situacoes ?? null,
+                parcelas:
+                    registro.MovimentacoesFinanceirasParcela ?? []
+            });
+        } catch (erro) {
+            console.error(
+                'Erro na consulta de Crédito Loja:',
+                erro.message
+            );
+
+            return res.status(502).json({
+                erro: 'Não foi possível consultar o recebimento. Confira o log do bot.'
+            });
+        }
+    }
+);
+
 async function gcApiTela(metodo, recebimentoId, corpo) {
     if (!/^\d+$/.test(String(recebimentoId))) {
         throw new Error('ID de recebimento inválido.');
