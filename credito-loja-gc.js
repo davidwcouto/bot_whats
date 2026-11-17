@@ -136,6 +136,32 @@ function createController(d) {
     const publicSnapshot = r => [String(r.id),String(r.valor),String(r.valor_total),String(r.liquidado),String(r.forma_pagamento_id),String(r.conta_bancaria_id),String(r.data_vencimento)];
     async function plan(local, amount, form, note) {
         const cfg = await config(local.id);
+		const formas = {
+    Pix: cfg.FORMA_PIX_ID,
+    Dinheiro: cfg.FORMA_DINHEIRO_ID,
+    'Devolução de Mercadorias': String(
+        process.env.GESTAOCLICK_FORMA_DEVOLUCAO_ID || ''
+    ).trim()
+};
+
+assert(
+    Object.prototype.hasOwnProperty.call(formas, form),
+    'Forma de pagamento inválida.'
+);
+
+const formId = formas[form];
+
+assert(
+    /^\d+$/.test(formId || ''),
+    'Configure GESTAOCLICK_FORMA_DEVOLUCAO_ID no Railway com o ID desta loja.'
+);
+
+if (form === 'Devolução de Mercadorias') {
+    assert(
+        String(note || '').trim().length > 0,
+        'Informe as peças devolvidas e o motivo na observação.'
+    );
+}
         assert(amount > 0 && amount <= local.balance, 'Valor maior que o saldo local ou inválido.');
         const all = await list(cfg), eligible = [];
         for (const r of all) {
@@ -205,7 +231,7 @@ function createController(d) {
         const steps = allocate(eligible,amount);
         assert(new Set(steps.map(x=>x.code)).size === steps.length, 'Esta prévia contém dois recebimentos abertos da mesma venda. Confira manualmente antes de prosseguir.');
         return {cfg,local:{id:String(local.id),name:local.nome,balance:local.balance},amount,form,note,
-            formId:form === 'Pix' ? cfg.FORMA_PIX_ID : cfg.FORMA_DINHEIRO_ID,
+            formId,
             eligibleTotal:eligible.reduce((s,r)=>s+r.total,0), steps, date:d.todayISO().split('-').reverse().join('/')};
     }
     async function load(id) {
@@ -229,9 +255,18 @@ function createController(d) {
     }
     function makeBody(p,s,record) {
         const body=clone(record), m=body.MovimentacoesFinanceira;
-        if (!s.remaining) Object.assign(m, {forma_pagamento_id:p.formId,nome_forma_pagamento:p.form,
-            situacao_id:p.cfg.SITUACAO_CONFIRMADO_ID,baixado:'1',data_baixa:p.date,
-            conta_bancaria_id:p.cfg.CONTA_BANCARIA_ID});
+if (!s.remaining) Object.assign(m, {
+    forma_pagamento_id: p.formId,
+    nome_forma_pagamento: p.form,
+    situacao_id: p.cfg.SITUACAO_CONFIRMADO_ID,
+    baixado: '1',
+    data_baixa: p.date,
+    conta_bancaria_id: p.cfg.CONTA_BANCARIA_ID,
+    observacoes: [
+        String(m.observacoes || '').trim(),
+        String(p.note || '').trim()
+    ].filter(Boolean).join('\n')
+});
         else {
             Object.assign(m,{ocorrencia:'P',tipo_parcela:'D',repeticao:'M',quantidade:'2',data_primeira_parcela:p.date,intervalo_dias:''});
             body.MovimentacoesFinanceirasParcela=[true,false].map((paid,i)=>({
@@ -747,10 +782,29 @@ async function vincularCliente(req, res) {
                 assert(/^\d+$/.test(id),'Cliente inválido.');
                 const [active]=await db.execute("SELECT id FROM conta_gc_operacoes WHERE cliente_local=? AND ativo_cliente IS NOT NULL",[id]);
                 if(active.length) return res.redirect(303,'/financeiro/credito-gc/'+active[0].id);
-                if(req.body.forma==='Devolução de Mercadorias') return next(); // Fluxo local anterior preservado.
-                assert(['Pix','Dinheiro'].includes(req.body.forma),'Forma de pagamento inválida.');
-                const local=await localInfo(id);
-                const p=await plan(local,cents(req.body.valor),req.body.forma,String(req.body.observacao||'').trim()||'Pagamento parcial');
+				const forma = String(req.body.forma || '').trim();
+				const observacao = String(req.body.observacao || '').trim();
+
+				assert(
+					['Pix', 'Dinheiro', 'Devolução de Mercadorias'].includes(forma),
+					'Forma de pagamento inválida.'
+				);
+
+				if (forma === 'Devolução de Mercadorias') {
+					assert(
+						observacao.length > 0,
+						'Informe as peças devolvidas e o motivo na observação.'
+					);
+				}
+
+				const local = await localInfo(id);
+
+				const p = await plan(
+					local,
+					cents(req.body.valor),
+					forma,
+					observacao || 'Pagamento parcial'
+				);
                 const opId=randomUUID();
                 await db.execute("INSERT INTO conta_gc_operacoes (id,cliente_local,loja,status,dados) VALUES (?,?,?,'preview',?)",[opId,id,p.cfg.LOJA_ID,JSON.stringify(p)]);
                 return res.redirect(303,'/financeiro/credito-gc/'+opId);
