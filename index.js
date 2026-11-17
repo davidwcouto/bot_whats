@@ -1648,8 +1648,22 @@ function montarMensagemPedido(dados) {
       `Desconto geral: R$ ${dados.desconto}\n`;
   }
 
+
+mensagem +=
+  `*Total: R$ ${dados.total || '0,00'}*\n`;
+
+const valeCompras = Number(
+  String(dados.valeCompras || '0')
+    .replace(/\./g, '')
+    .replace(',', '.')
+);
+
+if (valeCompras > 0) {
   mensagem +=
-    `*Total: R$ ${dados.total || '0,00'}*\n`;
+    `Vale-compras utilizado: R$ ${dados.valeCompras}\n` +
+    `*Restante a pagar: R$ ${dados.restantePagar}*\n`;
+}
+
 
   if (dados.formaPagamento) {
     mensagem +=
