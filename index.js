@@ -2411,20 +2411,22 @@ app.post('/enviar-pedido', async (req, res) => {
       });
     }
 
-    const {
-      pedido,
-      telefone,
-      cliente,
-	  atendente,
-	  endereco,
-	  cidade,
-      produtos,
-      valorProdutos,
-      desconto,
-      total,
-      formaPagamento,
-      coleta
-    } = req.body;
+const {
+  pedido,
+  telefone,
+  cliente,
+  atendente,
+  endereco,
+  cidade,
+  produtos,
+  valorProdutos,
+  desconto,
+  total,
+  valeCompras,
+  restantePagar,
+  formaPagamento,
+  coleta
+} = req.body;
 
     if (!pedido) {
       return res.status(400).json({
