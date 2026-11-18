@@ -1660,10 +1660,18 @@ if (valeCompras > 0) {
     `*Total: R$ ${dados.total || '0,00'}*\n`;
 }
 
-  if (dados.formaPagamento) {
-    mensagem +=
-      `Forma de pagamento: ${dados.formaPagamento}\n`;
-  }
+const restanteTexto = String(dados.restantePagar ?? '').trim();
+
+const restantePagar = restanteTexto
+  ? Number(restanteTexto.replace(/\./g, '').replace(',', '.'))
+  : NaN;
+
+if (valeCompras > 0 && restantePagar === 0) {
+  mensagem += 'Forma de pagamento: Vale-compras\n';
+} else if (dados.formaPagamento) {
+  mensagem +=
+    `Forma de pagamento: ${dados.formaPagamento}\n`;
+}
 
   if (
     dados.coleta &&
