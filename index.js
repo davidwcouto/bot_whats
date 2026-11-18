@@ -1635,35 +1635,30 @@ function montarMensagemPedido(dados) {
 	  }
 	}
 
-  if (dados.valorProdutos) {
-    mensagem +=
-      `Valor dos produtos: R$ ${dados.valorProdutos}\n`;
-  }
-
-  if (
-    dados.desconto &&
-    dados.desconto !== '0,00'
-  ) {
-    mensagem +=
-      `Desconto geral: R$ ${dados.desconto}\n`;
-  }
-
-
-mensagem +=
-  `*Total: R$ ${dados.total || '0,00'}*\n`;
-
 const valeCompras = Number(
   String(dados.valeCompras || '0')
     .replace(/\./g, '')
     .replace(',', '.')
 );
 
-if (valeCompras > 0) {
+if (dados.valorProdutos || valeCompras > 0) {
   mensagem +=
-    `Vale-compras utilizado: R$ ${dados.valeCompras}\n` +
-    `*Restante a pagar: R$ ${dados.restantePagar}*\n`;
+    `Valor dos produtos: R$ ${dados.valorProdutos || dados.total || '0,00'}\n`;
 }
 
+if (dados.desconto && dados.desconto !== '0,00') {
+  mensagem +=
+    `Desconto geral: R$ ${dados.desconto}\n`;
+}
+
+if (valeCompras > 0) {
+  mensagem +=
+    `Vale-compras: R$ ${dados.valeCompras}\n` +
+    `*Total: R$ ${dados.restantePagar}*\n`;
+} else {
+  mensagem +=
+    `*Total: R$ ${dados.total || '0,00'}*\n`;
+}
 
   if (dados.formaPagamento) {
     mensagem +=
