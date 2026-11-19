@@ -317,83 +317,99 @@ app.post(
  * Identifica a conversa pelo ID de uma mensagem.
  * Coutech Cell - Sapucaia
  */
+ 
 app.get(
     '/api/atendimento/testar-mensagem',
     autenticarControleAtendimento,
     async (req, res) => {
         try {
+            if (!client.info || !client.pupPage) {
+                return res.status(503).json({
+                    sucesso: false,
+                    erro: 'WhatsApp não conectado'
+                });
+            }
+
             const mensagemId = String(
                 req.query.mensagemId || ''
             ).trim();
 
-            if (!mensagemId || mensagemId.length > 255) {
+            if (!/^[a-zA-Z0-9_-]{10,150}$/.test(mensagemId)) {
                 return res.status(400).json({
                     sucesso: false,
-                    erro: 'ID da mensagem inválido'
+                    erro: 'ID de mensagem inválido'
                 });
             }
 
             const resultado = await client.pupPage.evaluate(
                 (idProcurado) => {
-                    const store = window.WAWebCollections || window.Store;
-
-                    if (!store?.Msg) {
-                        return {
-                            sucesso: false,
-                            erro: 'Mensagens ainda não disponíveis'
-                        };
-                    }
+                    const colecoes = window.require(
+                        'WAWebCollections'
+                    );
 
                     const mensagens =
-                        store.Msg.getModelsArray();
+                        colecoes.Msg.getModelsArray();
 
-                    const mensagem = mensagens.find(m => {
-                        const id = m.id?._serialized ||
-                            m.id?.toString?.() || '';
+                    const encontrados = [];
 
-                        return id === idProcurado;
-                    });
+                    for (const mensagem of mensagens) {
+                        const id = mensagem.id;
 
-                    if (!mensagem) {
-                        return {
-                            sucesso: false,
-                            erro: 'Mensagem não encontrada'
-                        };
-                    }
+                        const idInterno =
+                            id?.id || '';
 
-                    const chatId =
-                        mensagem.id?.remote?._serialized ||
-                        mensagem.id?.remote ||
-                        mensagem.chatId?._serialized ||
-                        mensagem.chatId ||
-                        mensagem.__x_id?.remote;
+                        const idCompleto =
+                            id?._serialized || '';
 
-                    if (typeof chatId !== 'string') {
-                        return {
-                            sucesso: false,
-                            erro: 'Conversa não identificada'
-                        };
+                        if (
+                            idInterno !== idProcurado &&
+                            idCompleto !== idProcurado
+                        ) {
+                            continue;
+                        }
+
+                        const chatId =
+                            id?.remote?._serialized ||
+                            mensagem.chatId?._serialized ||
+                            null;
+
+                        if (chatId) {
+                            encontrados.push(chatId);
+                        }
                     }
 
                     return {
-                        sucesso: true,
-                        chatId
+                        quantidadeMensagens: mensagens.length,
+                        encontrados: [...new Set(encontrados)]
                     };
                 },
                 mensagemId
             );
 
-            return res.json(resultado);
+            const chatId =
+                resultado.encontrados.length === 1
+                    ? resultado.encontrados[0]
+                    : null;
+
+            return res.json({
+                sucesso: true,
+                identificado: Boolean(chatId),
+                chatId,
+                quantidadeMensagens:
+                    resultado.quantidadeMensagens,
+                quantidadeCorrespondencias:
+                    resultado.encontrados.length
+            });
 
         } catch (erro) {
             console.error(
-                'Erro ao identificar mensagem:',
+                'Erro no teste de identificação por mensagem:',
                 erro
             );
 
             return res.status(500).json({
                 sucesso: false,
-                erro: 'Erro ao identificar mensagem'
+                erro: 'Falha ao consultar mensagem'
             });
         }
     }
