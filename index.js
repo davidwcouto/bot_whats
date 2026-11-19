@@ -183,8 +183,6 @@ async function gerarTokensAtendentes() {
 }
 
 const axios = require("axios");
-const OpenAI = require("openai");
-const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
 const cloudinary = require("cloudinary").v2;
 const path = require("path");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
