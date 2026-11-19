@@ -335,7 +335,7 @@ app.get(
 
             const resultado = await client.pupPage.evaluate(
                 (idProcurado) => {
-                    const store = window.Store;
+                    const store = window.WAWebCollections || window.Store;
 
                     if (!store?.Msg) {
                         return {
