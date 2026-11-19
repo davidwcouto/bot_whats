@@ -8972,7 +8972,6 @@ app.get(
 					<td>${escaparHtml(e.pedido || '—')}</td>
 					<td>${escaparHtml(e.cliente)}</td>
 					<td>${moedaEntregas(e.total)}</td>
-
 					<td>
 						<strong>
 							${escaparHtml(pagamentoNaConferencia(e))}
@@ -10209,7 +10208,7 @@ app.get('/api/comprovantes-infinitepay/pendentes', async (req, res) => {
 
 
 // ======================================================
-// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADOO
+// API - MARCAR COMPROVANTE INFINITEPAY COMO PROCESSADO
 // ======================================================
 
 app.post('/api/comprovantes-infinitepay/:id/processado', async (req, res) => {
@@ -10270,198 +10269,6 @@ app.post('/api/comprovantes-infinitepay/:id/processado', async (req, res) => {
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
-
-app.get(
-    '/entregas/teste-recebimento/:id',
-    autenticarEntregas,
-    async (req, res) => {
-        res.set('Cache-Control', 'no-store');
-
-        try {
-            const id = String(req.params.id || '').trim();
-
-            if (!/^\d+$/.test(id)) {
-                return res.status(400).json({
-                    erro: 'ID inválido.'
-                });
-            }
-
-            const config = gcConfiguracao();
-
-            const resposta = await gcApi(
-                'GET',
-                '/recebimentos/' + encodeURIComponent(id),
-                { loja_id: config.GESTAOCLICK_LOJA_ID }
-            );
-
-            const r = resposta.data;
-			
-			const lista = await gcListar('/recebimentos', {
-				loja_id: config.GESTAOCLICK_LOJA_ID,
-				cliente_id: r.cliente_id,
-				data_inicio: '2026-10-01',
-				data_fim: '2026-11-30'
-			});
-
-			const encontradoNaLista = lista.find(item =>
-				String(item.id) === id
-			);
-
-            if (!r || String(r.id) !== id) {
-                return res.status(404).json({
-                    erro: 'A API não retornou o recebimento solicitado.'
-                });
-            }
-
-            return res.json({
-                aviso: 'Consulta somente. Nenhum dado foi alterado.',
-                loja_configurada: config.GESTAOCLICK_LOJA_ID,
-				diagnostico_listagem: {
-					quantidade_retornada: lista.length,
-					encontrou_id: Boolean(encontradoNaLista),
-					registro_encontrado: encontradoNaLista
-						? {
-							id: encontradoNaLista.id,
-							descricao: encontradoNaLista.descricao,
-							cliente_id: encontradoNaLista.cliente_id,
-							loja_id: encontradoNaLista.loja_id
-						}
-						: null
-				},
-                recebimento: {
-                    id: r.id,
-                    descricao: r.descricao,
-                    cliente_id: r.cliente_id,
-                    nome_cliente: r.nome_cliente,
-                    loja_id: r.loja_id,
-                    nome_loja: r.nome_loja,
-                    valor: r.valor,
-                    valor_total: r.valor_total,
-                    liquidado: r.liquidado,
-                    forma_pagamento_id: r.forma_pagamento_id,
-                    nome_forma_pagamento: r.nome_forma_pagamento,
-                    data_vencimento: r.data_vencimento,
-                    data_liquidacao: r.data_liquidacao
-                }
-            });
-        } catch (erro) {
-            return res.status(502).json({
-                erro: erro.message
-            });
-        }
-    }
-);
-
-app.get(
-    '/entregas/teste-api-pagamento/:pedido',
-    autenticarEntregas,
-    async (req, res) => {
-        res.set('Cache-Control', 'no-store');
-
-        try {
-            const codigo = String(req.params.pedido || '').trim();
-
-            if (!/^\d+$/.test(codigo)) {
-                return res.status(400).json({
-                    erro: 'Número de pedido inválido.'
-                });
-            }
-
-            const config = gcConfiguracao();
-
-            const vendas = (
-                await gcListar('/vendas', {
-                    codigo,
-                    loja_id: config.GESTAOCLICK_LOJA_ID,
-                    tipo: 'vendas_balcao'
-                })
-            ).filter(venda => String(venda.codigo) === codigo);
-
-            if (vendas.length !== 1) {
-                return res.status(409).json({
-                    erro: 'Não foi encontrada uma única venda.',
-                    quantidade: vendas.length
-                });
-            }
-
-            const venda = vendas[0];
-
-            if (!/^\d+$/.test(String(venda.cliente_id || ''))) {
-                return res.status(409).json({
-                    erro: 'A venda não possui um cliente válido para consultar os recebimentos.'
-                });
-            }
-
-            // Consulta somente os recebimentos do cliente desta venda.
-            const recebimentos = await gcListar('/recebimentos', {
-                loja_id: config.GESTAOCLICK_LOJA_ID,
-                cliente_id: String(venda.cliente_id),
-                ...gcPeriodoRecebimentos(venda)
-            });
-
-            const vinculadosPorDescricao = recebimentos.filter(r => {
-                const referencia = String(r.descricao || '')
-                    .trim()
-                    .match(
-                        /^Venda de n[º°o]\s*(\d+)(?:\s*\(\s*\d+\s*\/\s*\d+\s*\))?$/i
-                    );
-
-                return (
-                    referencia?.[1] === codigo &&
-                    String(r.loja_id) ===
-                        config.GESTAOCLICK_LOJA_ID
-                );
-            });
-
-            return res.json({
-                aviso: 'Consulta somente. Nenhum dado foi alterado.',
-                loja_configurada: config.GESTAOCLICK_LOJA_ID,
-                formas_configuradas: {
-                    pix: config.GESTAOCLICK_FORMA_PIX_ID,
-                    dinheiro: config.GESTAOCLICK_FORMA_DINHEIRO_ID
-                },
-                venda: {
-                    id: venda.id,
-                    codigo: venda.codigo,
-                    cliente_id: venda.cliente_id,
-                    nome_cliente: venda.nome_cliente,
-                    loja_id: venda.loja_id,
-                    nome_loja: venda.nome_loja,
-                    data: venda.data,
-                    situacao_id: venda.situacao_id,
-                    situacao_financeiro: venda.situacao_financeiro,
-                    valor_total: venda.valor_total,
-                    condicao_pagamento: venda.condicao_pagamento,
-                    pagamentos: venda.pagamentos
-                },
-                recebimentos: vinculadosPorDescricao.map(r => ({
-                    id: r.id,
-                    descricao: r.descricao,
-                    cliente_id: r.cliente_id,
-                    loja_id: r.loja_id,
-                    valor: r.valor,
-                    valor_total: r.valor_total,
-                    liquidado: r.liquidado,
-                    forma_pagamento_id: r.forma_pagamento_id,
-                    nome_forma_pagamento: r.nome_forma_pagamento,
-                    conta_bancaria_id: r.conta_bancaria_id,
-                    plano_contas_id: r.plano_contas_id,
-                    data_vencimento: r.data_vencimento,
-                    data_competencia: r.data_competencia
-                }))
-            });
-        } catch (erro) {
-            console.error(
-                'Erro na consulta de teste GestãoClick:',
-                erro.message
-            );
-
-            return res.status(502).json({
-                erro: erro.message
-            });
-        }
-    }
-);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 API de cupons ativa na porta ${PORT}`);
