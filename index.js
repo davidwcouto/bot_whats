@@ -313,6 +313,91 @@ app.post(
     }
 );
 
+/**
+ * Identifica a conversa pelo ID de uma mensagem.
+ * Coutech Cell - Sapucaia
+ */
+app.get(
+    '/api/atendimento/testar-mensagem',
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const mensagemId = String(
+                req.query.mensagemId || ''
+            ).trim();
+
+            if (!mensagemId || mensagemId.length > 255) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'ID da mensagem inválido'
+                });
+            }
+
+            const resultado = await client.pupPage.evaluate(
+                (idProcurado) => {
+                    const store = window.Store;
+
+                    if (!store?.Msg) {
+                        return {
+                            sucesso: false,
+                            erro: 'Mensagens ainda não disponíveis'
+                        };
+                    }
+
+                    const mensagens =
+                        store.Msg.getModelsArray();
+
+                    const mensagem = mensagens.find(m => {
+                        const id = m.id?._serialized ||
+                            m.id?.toString?.() || '';
+
+                        return id === idProcurado;
+                    });
+
+                    if (!mensagem) {
+                        return {
+                            sucesso: false,
+                            erro: 'Mensagem não encontrada'
+                        };
+                    }
+
+                    const chatId =
+                        mensagem.id?.remote?._serialized ||
+                        mensagem.id?.remote ||
+                        mensagem.chatId?._serialized ||
+                        mensagem.chatId ||
+                        mensagem.__x_id?.remote;
+
+                    if (typeof chatId !== 'string') {
+                        return {
+                            sucesso: false,
+                            erro: 'Conversa não identificada'
+                        };
+                    }
+
+                    return {
+                        sucesso: true,
+                        chatId
+                    };
+                },
+                mensagemId
+            );
+
+            return res.json(resultado);
+
+        } catch (erro) {
+            console.error(
+                'Erro ao identificar mensagem:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro ao identificar mensagem'
+            });
+        }
+    }
+);
 
 /**
  * Consulta os autores das mensagens de uma conversa.
@@ -1244,7 +1329,7 @@ const valeCompras = Number(
 
 if (dados.valorProdutos || valeCompras > 0) {
   mensagem +=
-    `Valor dos produtos: R$ ${dados.valorProdutos || dados.total || '0,00'}\n`;
+    `Total do pedido: R$ ${dados.valorProdutos || dados.total || '0,00'}\n`;
 }
 
 if (dados.desconto && dados.desconto !== '0,00') {
