@@ -916,20 +916,20 @@ Digite 2️⃣ para atendimento.`;
 }
 
 const horarioAtendimento = {
-    inicio: 8,        // 09:00
+    inicio: 7,        // 09:00
     fim: 9,          // 18:00
     minutosFim: 00,   // Até 18:30
-    intervaloInicio: 12,   // Início do intervalo de não atendimento
-    intervaloFim: 12,     // Fim do intervalo de não atendimento
+    intervaloInicio: 8,   // Início do intervalo de não atendimento
+    intervaloFim: 8,     // Fim do intervalo de não atendimento
 };
 
 // Horário de atendimento especial para sabado
 const horarioSabado = {
-    inicio: 8,        // 09:00
+    inicio: 7,        // 09:00
     fim: 9,          // 18:00 (horário reduzido para sabado)
     minutosFim: 00,    // Sem minutos após as 18:00
-    intervaloInicio: 12,   // Início do intervalo de não atendimentoo
-    intervaloFim: 12,     // Fim do intervalo de não atendimento
+    intervaloInicio: 8,   // Início do intervalo de não atendimentoo
+    intervaloFim: 8,     // Fim do intervalo de não atendimento
 };
 
 // Função para verificar se está dentro do horário de atendimento
