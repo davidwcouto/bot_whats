@@ -1965,6 +1965,24 @@ setInterval(async () => {
             return;
         }
 
+        // Estados normais durante a autenticação.
+        if ([
+            "UNPAIRED",
+            "UNPAIRED_IDLE",
+            "OPENING",
+            "PAIRING",
+            "UNLAUNCHED"
+        ].includes(state)) {
+
+            falhasConsecutivasWhatsApp = 0;
+
+            console.log(
+                `⏳ WhatsApp aguardando conexão: ${state}`
+            );
+
+            return;
+        }
+
         falhasConsecutivasWhatsApp++;
 
         console.warn(
