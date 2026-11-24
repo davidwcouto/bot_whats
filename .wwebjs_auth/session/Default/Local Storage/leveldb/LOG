@@ -1,3 +1,2 @@
-2026/11/24-17:27:09.236 51a8 Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
-2026/11/24-17:27:09.241 51a8 Recovering log #3
-2026/11/24-17:27:09.243 51a8 Reusing old log C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb/000003.log 
+2026/11/24-18:48:58.954 364c Creating DB C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb since it was missing.
+2026/11/24-18:48:58.980 364c Reusing MANIFEST C:\Users\David Couto\Desktop\bot_whats\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001

@@ -573,7 +573,7 @@ const client = new Client({
     },
 
     puppeteer: {
-        headless: true,
+        headless: false,
 
         executablePath:
             process.env.PUPPETEER_EXECUTABLE_PATH,
@@ -586,8 +586,7 @@ const client = new Client({
             "--disable-gpu",
             "--disable-dev-shm-usage"
         ]
-    },
-	authTimeoutMs: 120000
+    }
 });
 
 
