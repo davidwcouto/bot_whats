@@ -182,6 +182,7 @@ async function gerarTokensAtendentes() {
     console.log('Tokens dos atendentes gerados.');
 }
 
+const QRCodeImagem = require('qrcode');
 const axios = require("axios");
 const cloudinary = require("cloudinary").v2;
 const path = require("path");
@@ -596,10 +597,97 @@ let clientesAtendidos = new Set(); // Garante que a mensagem inicial só seja en
 let silencedChats = new Set(); // Lista de conversas silenciadas
 let ultimoProdutoConsultado = new Map(); // Guardar o últiimo produto consultadoo
 
+// Armazena o QR Code atual do WhatsApp
+let qrCodeAtual = null;
+
 // Gera o QR Code para autenticação
 client.on("qr", (qr) => {
+    qrCodeAtual = qr;
+
     console.log("Escaneie este QR Code no WhatsApp Web:");
     qrcode.generate(qr, { small: true });
+});
+
+// Limpa o QR Code após a autenticação
+client.on("authenticated", () => {
+    qrCodeAtual = null;
+});
+
+// Página protegida para autenticação do WhatsApp
+app.get('/whatsapp/qr', async (req, res) => {
+    const senha = process.env.QR_CODE_PASSWORD;
+
+    res.set('Cache-Control', 'no-store');
+
+    if (!senha) {
+        return res.status(503).send('Acesso desativado.');
+    }
+
+    const auth = req.headers.authorization || '';
+    const esperado = 'Basic ' + Buffer.from(
+        'admin:' + senha
+    ).toString('base64');
+
+    if (auth !== esperado) {
+        res.set('WWW-Authenticate', 'Basic realm="Coutech Cell"');
+        return res.status(401).send('Acesso não autorizado.');
+    }
+
+    try {
+        const imagem = qrCodeAtual
+            ? await QRCodeImagem.toDataURL(qrCodeAtual, {
+                width: 400,
+                margin: 4
+            })
+            : null;
+
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="pt-BR">
+            <head>
+                <meta charset="UTF-8">
+                <meta http-equiv="refresh" content="5">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>WhatsApp - Coutech Cell</title>
+                <style>
+                    body {
+                        background: #151515;
+                        color: white;
+                        font-family: Arial, sans-serif;
+                        text-align: center;
+                        padding: 40px 10px;
+                    }
+
+                    img {
+                        width: 400px;
+                        max-width: 100%;
+                        border-radius: 10px;
+                    }
+
+                    p {
+                        color: #aaa;
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>COUTECH CELL</h1>
+                <h2>Conectar WhatsApp - Sapucaia</h2>
+
+                ${imagem
+                    ? `<img src="${imagem}">
+                       <p>Escaneie o QR Code pelo WhatsApp.</p>`
+                    : `<h3>Nenhum QR Code disponível.</h3>
+                       <p>Aguardando autenticação ou sessão existente.</p>`
+                }
+
+                <p>Atualização automática a cada 5 segundos.</p>
+            </body>
+            </html>
+        `);
+    } catch (erro) {
+        console.error('Erro ao gerar QR Code:', erro.message);
+        res.status(500).send('Erro ao gerar QR Code.');
+    }
 });
 
 // Confirma que o bot foi iniciado

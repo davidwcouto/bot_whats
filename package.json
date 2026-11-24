@@ -22,6 +22,7 @@
     "openai": "^6.49.0",
     "pdf-conferencia": "npm:pdf-parse@2.4.5",
     "pdf-parse": "^2.4.5",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "0.12.0",
     "tesseract.js": "^7.0.0",
     "whatsapp-web.js": "github:wwebjs/whatsapp-web.js#38eb45b",
