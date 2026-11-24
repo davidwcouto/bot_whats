@@ -24,7 +24,7 @@
     "pdf-parse": "^2.4.5",
     "qrcode-terminal": "0.12.0",
     "tesseract.js": "^7.0.0",
-    "whatsapp-web.js": "1.34.8",
+    "whatsapp-web.js": "github:wwebjs/whatsapp-web.js#38eb45b",
     "xlsx": "0.18.5"
   }
 }
