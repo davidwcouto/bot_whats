@@ -690,7 +690,7 @@ app.get('/whatsapp/qr', async (req, res) => {
     }
 });
 
-// Confirma que o bot foi iniciado
+// Confirma que o bot foi iniciadooo
 client.on('ready', async () => {
     console.log("🤖 Bot conectado e pronto para uso!");
 	
