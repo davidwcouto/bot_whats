@@ -215,6 +215,7 @@ app.post(
             const chatId = String(req.body?.chatId || '').trim();
             const cliente = String(req.body?.cliente || '').trim();
             const quantidade = Number(req.body?.quantidade);
+			const mensagemId = String(req.body?.mensagemId || '').trim();
 
             if (
                 !/^(?:\d+@c\.us|\d+@lid)$/.test(chatId) ||
@@ -222,7 +223,8 @@ app.post(
                 cliente.length > 255 ||
                 !Number.isInteger(quantidade) ||
                 quantidade < 1 ||
-                quantidade > 999999
+                quantidade > 999999 ||
+!/^[a-zA-Z0-9_-]{10,150}$/.test(mensagemId)
             ) {
                 return res.status(400).json({
                     sucesso: false,
@@ -232,21 +234,23 @@ app.post(
 
             const atendente = req.atendente;
 
-            const [resultado] = await db.execute(`
-                INSERT INTO aberturas_conversas_whatsapp (
-                    chat_id,
-                    cliente,
-                    aberto_por,
-                    quantidade_nao_lidas,
-                    aberto_em
-                )
-                VALUES (?, ?, ?, ?, NOW(3))
-            `, [
-                chatId,
-                cliente,
-                atendente.nome,
-                quantidade
-            ]);
+const [resultado] = await db.execute(`
+    INSERT INTO aberturas_conversas_whatsapp (
+        chat_id,
+        mensagem_id,
+        cliente,
+        aberto_por,
+        quantidade_nao_lidas,
+        aberto_em
+    )
+    VALUES (?, ?, ?, ?, ?, NOW(3))
+`, [
+    chatId,
+    mensagemId,
+    cliente,
+    atendente.nome,
+    quantidade
+]);
 
             console.log(
                 '👁️ Conversa não lida aberta:',
@@ -261,11 +265,26 @@ app.post(
                 atendente: atendente.nome
             });
 
-        } catch (erro) {
-            console.error(
-                'Erro ao registrar abertura:',
-                erro
-            );
+} catch (erro) {
+
+    if (
+        erro.code === 'ER_DUP_ENTRY' &&
+        String(erro.sqlMessage || erro.message)
+            .includes('uq_abertura_mensagem')
+    ) {
+        console.log('⚠️ Abertura já registrada anteriormente.');
+
+        return res.json({
+            sucesso: false,
+            duplicado: true,
+            erro: 'Esta abertura já foi registrada'
+        });
+    }
+
+    console.error(
+        'Erro ao registrar abertura:',
+        erro
+    );
 
             return res.status(500).json({
                 sucesso: false,
