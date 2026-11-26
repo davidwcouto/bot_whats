@@ -202,6 +202,79 @@ const storage = multer.diskStorage({
     }
 });
 
+// ======================================================
+// REGISTRAR ABERTURA DE CONVERSA NÃO LIDA
+// ======================================================
+
+app.post(
+    '/api/atendimento/abertura/registrar',
+    express.json(),
+    autenticarControleAtendimento,
+    async (req, res) => {
+        try {
+            const chatId = String(req.body?.chatId || '').trim();
+            const cliente = String(req.body?.cliente || '').trim();
+            const quantidade = Number(req.body?.quantidade);
+
+            if (
+                !/^(?:\d+@c\.us|\d+@lid)$/.test(chatId) ||
+                !cliente ||
+                cliente.length > 255 ||
+                !Number.isInteger(quantidade) ||
+                quantidade < 1 ||
+                quantidade > 999999
+            ) {
+                return res.status(400).json({
+                    sucesso: false,
+                    erro: 'Dados da abertura inválidos'
+                });
+            }
+
+            const atendente = req.atendente;
+
+            const [resultado] = await db.execute(`
+                INSERT INTO aberturas_conversas_whatsapp (
+                    chat_id,
+                    cliente,
+                    aberto_por,
+                    quantidade_nao_lidas,
+                    aberto_em
+                )
+                VALUES (?, ?, ?, ?, NOW(3))
+            `, [
+                chatId,
+                cliente,
+                atendente.nome,
+                quantidade
+            ]);
+
+            console.log(
+                '👁️ Conversa não lida aberta:',
+                cliente,
+                '| Funcionário:', atendente.nome,
+                '| Mensagens:', quantidade
+            );
+
+            return res.json({
+                sucesso: true,
+                id: resultado.insertId,
+                atendente: atendente.nome
+            });
+
+        } catch (erro) {
+            console.error(
+                'Erro ao registrar abertura:',
+                erro
+            );
+
+            return res.status(500).json({
+                sucesso: false,
+                erro: 'Erro ao registrar abertura'
+            });
+        }
+    }
+);
+
 app.post(
     '/api/atendimento/assumir',
     express.json(),
