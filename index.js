@@ -384,6 +384,31 @@ app.post(
                 chatId,
                 atendente.id
             ]);
+			
+			            if (resultado.affectedRows === 1) {
+
+                const [aberturasRespondidas] = await db.execute(`
+                    UPDATE aberturas_conversas_whatsapp
+                    SET
+                        respondido_por = ?,
+                        respondido_em = NOW(3)
+                    WHERE chat_id = ?
+                    AND respondido_em IS NULL
+                    AND aberto_em <= NOW(3)
+                `, [
+                    atendente.nome,
+                    chatId
+                ]);
+
+                if (aberturasRespondidas.affectedRows > 0) {
+                    console.log(
+                        '✅ Conversa respondida:',
+                        chatId,
+                        '| Funcionário:',
+                        atendente.nome
+                    );
+                }
+            }
 
             return res.json({
                 sucesso: true,
